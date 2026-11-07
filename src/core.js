@@ -404,6 +404,82 @@
       contratos
     };
   }
+  // ---------- cuadre: lo que leyó el dashboard contra los totales de cada reporte ----------
+  const TOTAL_RE = /^(GRAN TOTAL|Gran total)/i;
+  function reconcile(reports, model, agg) {
+    const out = []; const tol = 0.05;
+    const push = (grupo, reporte, concepto, a, b, nota) => { const d = r2((a || 0) - (b || 0)); out.push({ grupo, reporte, concepto, a: r2(a || 0), b: r2(b || 0), diff: d, ok: Math.abs(d) <= tol, nota: Math.abs(d) <= tol ? '' : (nota || '') }); };
+    const byKey = {}; reports.forEach(r => { if (r.key) (byKey[r.key] = byKey[r.key] || []).push(r); });
+    // 1) cada reporte: suma del detalle = total que trae el reporte
+    for (const r of reports) {
+      if (!r.key || r.key === 'feci') continue;
+      const det = r.aoa.filter(x => x && CONTRACT.test(str(x[0])));
+      let tot = null;
+      for (let i = r.aoa.length - 1; i >= 0; i--) { const x = r.aoa[i]; if (x && TOTAL_RE.test(str(x[0]))) { tot = x; break; } }
+      const name = BY_KEY[r.key].name + (r.meta.aseguradora ? ' · ' + r.meta.aseguradora : '');
+      if (r.key === 'segvida') {
+        const st = r.aoa.find(x => x && x.some(v => str(v) === 'Sub Total')); if (st) { const j = st.findIndex(v => str(v) === 'Sub Total'); const val = st.slice(j + 1).find(v => typeof v === 'number'); push('Cada reporte cuadra consigo mismo', name, 'Prima (sub total)', det.reduce((s, x) => s + num(x[14]), 0), val); }
+        const tp = r.aoa.find(x => x && /^Total de prestamos/i.test(str(x[0]))); if (tp) push('Cada reporte cuadra consigo mismo', name, 'Cantidad de préstamos', det.length, num(tp[1]));
+        continue;
+      }
+      if (!tot) continue;
+      const firstDet = r.aoa.findIndex(x => x && CONTRACT.test(str(x[0]))); const hdr = r.aoa.slice(3, firstDet > 3 ? firstDet : 7);
+      const AG = ['Moroso 30 días', 'Moroso 60 días', 'Moroso 90 días', 'Moroso 120 días', 'Moroso 180 días', 'Moroso 365 días', 'Moroso más de 365'];
+      const FIX = (r.key === 'cierre' || r.key === 'moraFecha') ? { 2: 'Monto préstamo', 3: 'Saldo préstamo', 8: 'Saldo corriente', 9: AG[0], 10: AG[1], 11: AG[2], 12: AG[3], 13: AG[4], 14: AG[5], 15: AG[6], 16: 'Total moroso', 17: 'Total moroso' }
+        : (r.key === 'moraProducto' || r.key === 'moraBanca') ? { 3: 'Monto préstamo', 4: 'Saldo préstamo', 5: 'Pagos realizados', 7: 'Saldo corriente', 8: AG[0], 9: AG[1], 10: AG[2], 11: AG[3], 12: AG[4], 13: AG[5], 14: AG[6], 16: 'Saldo facturado por cobrar' }
+        : ['banca', 'patrono', 'producto', 'productoEsp'].includes(r.key) ? { 6: 'Monto préstamo', 7: 'Saldo préstamo', 12: 'Total pagos realizados', 14: 'Saldo corriente', 15: r.key === 'productoEsp' ? 'Saldo vencido' : 'Saldo moroso', 17: 'Saldo facturado por cobrar' }
+        : r.key === 'especial' ? { 5: 'Monto préstamo', 6: 'Saldo préstamo', 11: 'Total pagos realizados', 13: 'Saldo valor presente', 14: 'Saldo neto actual' }
+        : r.key === 'rubros' ? { 11: 'Monto préstamo', 14: 'Mora a la fecha (monto)', 15: 'Saldo préstamo', 16: 'SVP', 17: 'Capital', 18: 'Intereses', 19: 'Manejo', 20: 'FECI', 21: 'Seguro de vida' }
+        : r.key === 'recaudo' ? { 7: 'Pago efectivo', 8: 'Pago cheque', 9: 'Total recaudo' }
+        : r.key === 'intereses' ? { 5: 'Intereses total', 6: 'Intereses del mes', 7: 'Intereses del mes (XC)', 8: 'Intereses acumulado', 9: 'Intereses por devengar', 10: 'GM total', 11: 'GM del mes', 12: 'GM del mes (XC)', 13: 'GM acumulado', 14: 'GM por devengar' }
+        : r.key === 'aVencer' ? { 4: 'Monto préstamo', 5: 'Saldo préstamo', 10: 'Total pagos realizados', 12: 'Saldo corriente', 13: 'Saldo vencido', 15: 'Total facturado por cobrar' }
+        : r.key === 'vencidos' ? { 4: 'Monto préstamo', 5: 'Saldo préstamo', 11: 'Total pagos realizados', 13: 'Saldo corriente', 14: 'Saldo vencido', 16: 'Total facturado por cobrar' }
+        : r.key === 'cancelados' ? { 8: 'Monto cancelado', 9: 'Intereses ganados', 10: 'Gastos de manejo' }
+        : r.key === 'pagos' ? { 6: 'Caja + pagos por aplicar', 7: 'CxC agencia de cobro', 8: 'Préstamo por cobrar', 9: 'Intereses por cobrar', 10: 'FECI por cobrar', 11: 'Seguro vida por cobrar', 15: 'Ingresos varios', 16: 'Ingreso cuentas malas', 17: 'Devolución intereses', 18: 'Devolución FECI', 19: 'Devolución seguro vida', 20: 'Devolución pago en exceso' } : {};
+      const label = j => { if (FIX[j]) return FIX[j]; for (let k = hdr.length - 1; k >= 0; k--) { const v = hdr[k] && hdr[k][j]; if (v != null && str(v)) return str(v).replace(/\s+/g, ' '); } return 'Columna ' + (j + 1); };
+      tot.forEach((v, j) => {
+        if (j === 0 || typeof v !== 'number') return;
+        const s = det.reduce((a, x) => a + num(x[j]), 0);
+        if (Math.abs(v - det.length) < 0.5 && Math.abs(s - v) > tol) push('Cada reporte cuadra consigo mismo', name, 'Cantidad de préstamos', det.length, v);
+        else push('Cada reporte cuadra consigo mismo', name, label(j), s, v);
+      });
+    }
+    // 2) los números del dashboard contra los reportes
+    const gt = (key, j) => { const r = (byKey[key] || [])[0]; if (!r) return null; for (let i = r.aoa.length - 1; i >= 0; i--) { const x = r.aoa[i]; if (x && TOTAL_RE.test(str(x[0]))) return num(x[j]); } return null; };
+    const k = agg.kpi; const D = 'Dashboard contra el reporte';
+    const add = (rep, concepto, a, key, j, nota) => { const b = gt(key, j); if (b != null && byKey[key]) push(D, rep, concepto, a, b, nota); };
+    add(BY_KEY.cierre.name, 'Cartera total (saldo)', k.cartera, 'cierre', 3);
+    add(BY_KEY.cierre.name, 'Monto original', k.montoOriginal, 'cierre', 2);
+    add(BY_KEY.cierre.name, 'Saldo corriente', k.corriente, 'cierre', 8);
+    add(BY_KEY.cierre.name, 'Total moroso', k.moroso, 'cierre', 17);
+    AGING.forEach((a, i) => add(BY_KEY.cierre.name, 'Moroso ' + a + (a === 'Mas 365' ? '' : ' días'), agg.agingTot[i], 'cierre', 9 + i));
+    add(BY_KEY.recaudo.name, 'Recaudo del mes', k.recaudo, 'recaudo', 9); add(BY_KEY.recaudo.name, 'Recaudo en efectivo', k.recaudoEfectivo, 'recaudo', 7); add(BY_KEY.recaudo.name, 'Recaudo en cheque', k.recaudoCheque, 'recaudo', 8);
+    add(BY_KEY.pagos.name, 'Capital y cuotas aplicadas', k.pagosCapital, 'pagos', 8); add(BY_KEY.pagos.name, 'Devolución de intereses', k.pagosDevInt, 'pagos', 17); add(BY_KEY.pagos.name, 'Devolución seguro de vida', k.pagosDevSeg, 'pagos', 19);
+    add(BY_KEY.intereses.name, 'Intereses del mes', k.interesesMes, 'intereses', 6); add(BY_KEY.intereses.name, 'Gastos de manejo del mes', k.gmMes, 'intereses', 11);
+    add(BY_KEY.intereses.name, 'Intereses por devengar (saldo)', k.interesesSaldo, 'intereses', 9); add(BY_KEY.intereses.name, 'GM por devengar (saldo)', k.gmSaldo, 'intereses', 14);
+    add(BY_KEY.rubros.name, 'Capital', k.rubCapital, 'rubros', 17); add(BY_KEY.rubros.name, 'Intereses', k.rubInteres, 'rubros', 18); add(BY_KEY.rubros.name, 'Manejo', k.rubManejo, 'rubros', 19); add(BY_KEY.rubros.name, 'FECI', k.rubFeci, 'rubros', 20); add(BY_KEY.rubros.name, 'Seguro de vida', k.rubSegVida, 'rubros', 21);
+    add(BY_KEY.especial.name, 'Valor presente', k.valorPresente, 'especial', 13);
+    add(BY_KEY.cancelados.name, 'Monto cancelado', k.canceladosMonto, 'cancelados', 8);
+    add(BY_KEY.aVencer.name, 'Saldo a vencer', k.aVencerSaldo, 'aVencer', 5);
+    add(BY_KEY.vencidos.name, 'Saldo vencido', k.vencidosRepSaldo, 'vencidos', 5);
+    if (byKey.segvida) { let st = 0; byKey.segvida.forEach(r => { const x = r.aoa.find(y => y && y.some(v => str(v) === 'Sub Total')); if (x) { const j = x.findIndex(v => str(v) === 'Sub Total'); st += num(x.slice(j + 1).find(v => typeof v === 'number')); } }); push(D, BY_KEY.segvida.name, 'Prima de seguro de vida', k.segPrima, st); }
+    // 3) entre reportes
+    const E = 'Entre reportes';
+    const cart = ['rubros', 'banca', 'patrono', 'producto', 'productoEsp', 'especial', 'moraFecha', 'moraProducto', 'moraBanca'];
+    const col = { rubros: 15, banca: 7, patrono: 7, producto: 7, productoEsp: 7, especial: 6, moraFecha: 3, moraProducto: 4, moraBanca: 4 };
+    const base = gt('cierre', 3);
+    if (base != null) cart.forEach(key => { const v = gt(key, col[key]); if (v != null) push(E, BY_KEY[key].name, 'Saldo de cartera = cierre', v, base); });
+    const ids = key => new Set(((byKey[key] || [])[0] || { rows: [] }).rows.map(x => x.id));
+    const ci = ids('cierre');
+    if (ci.size) ['rubros', 'banca', 'patrono', 'producto'].forEach(key => { if (!byKey[key]) return; const s = ids(key); const faltan = [...ci].filter(x => !s.has(x)).length + [...s].filter(x => !ci.has(x)).length; push(E, BY_KEY[key].name, 'Mismos contratos que el cierre (diferencias)', faltan, 0); });
+    if (byKey.recaudo && byKey.pagos) push(E, 'Recaudado vs pagos aplicados', 'Total del mes', gt('recaudo', 9), gt('pagos', 6));
+    if (byKey.feci && byKey.rubros) push(E, 'FECI vs saldos por rubro', 'Saldo FECI', k.feciSaldo, gt('rubros', 20));
+    if (byKey.moraFecha && byKey.cierre) push(E, 'Morosidad a la fecha vs al cierre', 'Total moroso', gt('moraFecha', 16), gt('cierre', 17), 'Normal: el reporte "a la fecha" se imprimió después del cierre (con la mora acumulada hasta ese día).');
+    if (byKey.banca && byKey.cierre) push(E, 'Cartera activa vs morosidad al cierre', 'Saldo moroso', gt('banca', 15), gt('cierre', 17), 'Normal: la cartera activa es "a la fecha" de impresión, no al cierre.');
+    if (byKey.vencidos && byKey.rubros) push(E, 'Vencidos vs saldos por rubro', 'Préstamos vencidos', (byKey.vencidos[0].rows || []).length, model.loans.filter(l => l.estado === 'Vencido').length, 'El estado "Vencido" de saldos por rubro y el informe de vencidos pueden diferir si se imprimieron en fechas distintas.');
+    return out;
+  }
+
   // ---------- análisis a fondo (sin datos personales) ----------
   function deepAnalysis(model) {
     const L = model.loans; const end = model.month ? lastDay(model.month) : new Date().toISOString().slice(0, 10);
@@ -436,7 +512,21 @@
     const pareto = [1, 5, 10, 25, 50, 100].filter(n => n <= sorted.length).map(n => ({ n, pct: at(n) }));
     const multi = [...new Map(L.map(l => [l.cedula || l.nombre, 0])).keys()].length;
     // cuota mensual vs cobrado (eficiencia de cobro de clientes al día)
+    // seguro de vida y FECI
+    const sv = model.R.segvida || []; const AGE = ['Menos de 40', '40 a 49', '50 a 59', '60 a 69', '70 o más'];
+    const segAge = AGE.map(k => ({ k, n: 0, prima: 0, saldo: 0 })); const segSex = {}; const svIds = new Set(sv.map(s => s.id));
+    sv.forEach(s => { const e = s.edad || 0; const g = segAge[e < 40 ? 0 : e < 50 ? 1 : e < 60 ? 2 : e < 70 ? 3 : 4]; g.n++; g.prima = r2(g.prima + s.prima); g.saldo = r2(g.saldo + s.saldoNeto); const sx = s.sexo === 'F' ? 'Mujeres' : s.sexo === 'M' ? 'Hombres' : 'Otro'; segSex[sx] = segSex[sx] || { k: sx, n: 0, prima: 0 }; segSex[sx].n++; segSex[sx].prima = r2(segSex[sx].prima + s.prima); });
+    const sinSeg = L.filter(l => !svIds.has(l.id));
+    const fe = model.R.feci || []; const feSt = {}; fe.forEach(f => { const k = f.estatus || '—'; feSt[k] = feSt[k] || { k, n: 0, saldo: 0, mes: 0, pagos: 0 }; feSt[k].n++; feSt[k].saldo = r2(feSt[k].saldo + f.saldoFeci); feSt[k].mes = r2(feSt[k].mes + f.feciMes); feSt[k].pagos = r2(feSt[k].pagos + f.pagosMes); });
+    const feciB = BUCKETS.map((b, i) => ({ k: b, feci: r2(L.filter(l => l.bucket === i).reduce((s, l) => s + (l.rub.feci || 0), 0)) }));
+    const segB = BUCKETS.map((b, i) => ({ k: b, seg: r2(L.filter(l => l.bucket === i).reduce((s, l) => s + (l.rub.segVida || 0), 0)), prima: r2(L.filter(l => l.bucket === i).reduce((s, l) => s + (l.segPrima || 0), 0)) }));
+    const cancel = (model.R.cancelados || []).map(x => ({ fecha: x.fcancel, monto: x.monto, intereses: x.intereses, gm: x.gm }));
+    const vencAge = ['Menos de 1 año', '1 a 3 años', '3 a 5 años', 'Más de 5 años'].map(k => ({ k, n: 0, saldo: 0 }));
+    (model.R.vencidos || []).forEach(v => { const y = (v.diasVencido || 0) / 365; const g = vencAge[y < 1 ? 0 : y < 3 ? 1 : y < 5 ? 2 : 3]; g.n++; g.saldo = r2(g.saldo + v.saldo); });
+    const seguro = { segAge, segSex: Object.values(segSex), sinSeguroN: sinSeg.length, sinSeguroSaldo: r2(sinSeg.reduce((s, l) => s + l.saldo, 0)), saldoAsegurado: r2(sv.reduce((s, x) => s + x.saldoNeto, 0)), tarifaProm: sv.length ? sv.reduce((s, x) => s + x.tarifa, 0) / sv.length : 0, segB };
+    const feci = { byStatus: Object.values(feSt), byBucket: feciB, prestamos: fe.length, feciTotal: r2(fe.reduce((s, x) => s + x.feci, 0)), devengado: r2(fe.reduce((s, x) => s + x.feciDeven, 0)) };
     return {
+      seguro, feci, cancel, vencAge,
       byVintage: fin(vin), byMaturity: fin(mat, MAT), byRate: fin(rate, RATE), byLastPay: fin(lp, LP), byRefi: fin(refi), byFreq: fin(freq), comp,
       tasaProm: ws ? wr / ws : 0, gmProm: wgs ? wg / wgs : 0, clientes: cl.size, conVarios: L.length - multi,
       top10Pct: at(10), top25Pct: at(25), top1Pct: at(1), pareto, curve: cum.filter((_, i) => i % Math.max(1, Math.floor(cum.length / 60)) === 0 || i === cum.length - 1).map(x => +x.toFixed(4)),
@@ -495,6 +585,6 @@
     });
   }
 
-  const api = { letrasEnMes, topClients, deepAnalysis, metaFromAgg, BUCKET_TOP, REPORTS, BY_KEY, BUCKETS, AGING, MESES, DEFAULT_CONFIG, GSF_HEAD, GSF_TYPES, readReport, bufToAOA, identify, reportMeta, batchMonth, buildModel, aggregate, computeMeta, rollMatrix, gsfRows, monthLabel, lastDay, nextMonth, freqName, bucketOf, validDate, r2 };
+  const api = { reconcile, letrasEnMes, topClients, deepAnalysis, metaFromAgg, BUCKET_TOP, REPORTS, BY_KEY, BUCKETS, AGING, MESES, DEFAULT_CONFIG, GSF_HEAD, GSF_TYPES, readReport, bufToAOA, identify, reportMeta, batchMonth, buildModel, aggregate, computeMeta, rollMatrix, gsfRows, monthLabel, lastDay, nextMonth, freqName, bucketOf, validDate, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);

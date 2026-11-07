@@ -119,6 +119,11 @@
     tableSheet(wb, 'Último pago', gc('Último pago'), d.byLastPay.map(gr), { total: true, title: 'Antigüedad del último pago', sub: agg.label });
     tableSheet(wb, 'Refinanciados', gc('Tipo'), d.byRefi.concat(d.byFreq.map(x => Object.assign({}, x, { k: 'Forma de pago: ' + x.k }))).map(gr), { title: 'Refinanciados y forma de pago', sub: agg.label });
     tableSheet(wb, 'Composición saldo', [['Tramo', 14], ['Capital', 16, ACC, 1], ['Intereses', 16, ACC, 1], ['Manejo', 16, ACC, 1], ['FECI', 16, ACC, 1], ['Seguro vida', 16, ACC, 1]], d.comp.map(c => [c.k, c.capital, c.interes, c.manejo, c.feci, c.segVida]), { total: true, title: 'Composición del saldo por rubro y tramo', sub: agg.label });
+    if (d.seguro) {
+      tableSheet(wb, 'Seguro de vida', [['Edad', 16], ['Asegurados', 12, null, 1], ['Prima', 14, ACC, 1], ['Saldo asegurado', 16, ACC, 1]], d.seguro.segAge.map(x => [x.k, x.n, x.prima, x.saldo]), { total: true, title: 'Seguro de vida por edad', sub: `${agg.label} · ${d.seguro.sinSeguroN} préstamos sin seguro (${d.seguro.sinSeguroSaldo.toFixed(2)} de saldo)` });
+      tableSheet(wb, 'FECI', [['Tramo', 14], ['Saldo FECI', 16, ACC, 1], ['Saldo seguro vida', 16, ACC, 1]], d.feci.byBucket.map((x, i) => [x.k, x.feci, (d.seguro.segB[i] || {}).seg || 0]), { total: true, title: 'Saldo de FECI y seguro por tramo de mora', sub: `${agg.label} · FECI generado ${d.feci.feciTotal.toFixed(2)} · devengado ${d.feci.devengado.toFixed(2)}` });
+      tableSheet(wb, 'Vencidos', [['Antigüedad', 18], ['Préstamos', 12, null, 1], ['Saldo', 16, ACC, 1]], (d.vencAge || []).map(x => [x.k, x.n, x.saldo]), { total: true, title: 'Préstamos vencidos por antigüedad', sub: agg.label });
+    }
     tableSheet(wb, 'Concentración', [['Mayores N clientes', 18], ['% de la cartera', 16, '0.0%']], d.pareto.map(p => [`Top ${p.n}`, p.pct]), { title: 'Concentración de la cartera por cliente', sub: `${agg.label} · ${d.clientes} clientes` });
   }
 
@@ -203,7 +208,7 @@
     return wb;
   }
 
-  async function analysisWorkbook(model, agg, config) {
+  async function analysisWorkbook(model, agg, config, cuadre) {
     const wb = new (EX().Workbook)(); wb.created = new Date();
     const blue = 'FF1F3A5F';
     const sheet = (name, cols, data, fmts) => {
@@ -244,6 +249,7 @@
     }
     addTopSheet(wb, model, agg, 25);
     addDeepSheets(wb, agg);
+    if (cuadre && cuadre.length) tableSheet(wb, 'Cuadre', [['Estado', 11], ['Tipo', 28], ['Reporte', 44], ['Concepto', 34], ['Dashboard / detalle', 18, ACC], ['Total del reporte', 18, ACC], ['Diferencia', 14, ACC], ['Nota', 60]], cuadre.map(r => [r.ok ? 'Cuadra' : r.nota ? 'Explicada' : 'Diferencia', r.grupo, r.reporte, r.concepto, r.a, r.b, r.diff, r.nota]), { title: 'Cuadre con los reportes del SIF', sub: `${agg.label} · ${cuadre.filter(r => r.ok).length} de ${cuadre.length} comparaciones exactas` });
     return wb;
   }
 

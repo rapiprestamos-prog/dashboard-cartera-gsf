@@ -9,6 +9,8 @@ Dashboard interactivo que lee los reportes del SIF (Grupo de Servicios Financier
 - **Ingresos**: intereses y GM devengados, FECI, seguro de vida, cancelados y por vencer.
 - **Excel GSF**: genera "GSF - Cartera Cierre <fecha>.xlsx" (morosidad al cierre + saldos por rubro) con hojas opcionales de resumen, meta de cobros, 25 mayores clientes y análisis; además un Excel de análisis completo.
 - **Presentación gerencial**: en pantalla y descargable en PowerPoint con gráficos editables.
+- **Cuadre**: compara cada número del dashboard y cada columna de cada reporte contra los totales del SIF (en septiembre 2026: 172 de 174 exactos; las 2 diferencias son por fecha de impresión).
+- **Seguro de vida y FECI**: prima por edad, aseguradora y sexo, préstamos sin seguro, saldo FECI y seguro por tramo, vencidos por antigüedad.
 - **Ver reportes**: abre u oculta cada Excel original.
 
 ## Datos

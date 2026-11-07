@@ -415,6 +415,34 @@
     $('#anaIns').innerHTML = ins.map(i => `<li class="${i.t}"><i></i><span>${esc(i.x)}</span></li>`).join('');
   }
 
+
+  // ---------- CUADRE ----------
+  function renderCuadre() {
+    const v = $('#v-cuadre'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
+    const md = model();
+    if (!md) { v.innerHTML = `<div class="vhead"><div><h2>Cuadre con los reportes</h2><p>Compara cada número del dashboard contra los totales que trae cada reporte del SIF.</p></div></div>${a.cuadre ? `<div class="grid g-kpi">${kpiCard('Último cuadre', a.cuadre.ok + ' de ' + a.cuadre.total, 'comparaciones exactas', '#34d399')}</div>` : ''}<div class="card mt">${needDetail('El cuadre necesita los reportes originales.')}</div>`; return; }
+    const res = C.reconcile(reports(), md, a);
+    const ok = res.filter(r => r.ok).length, bad = res.length - ok, expl = res.filter(r => !r.ok && r.nota).length;
+    v.innerHTML = `
+      <div class="vhead"><div><h2>Cuadre con los reportes · ${esc(a.label)}</h2><p>Cada fila compara un número contra el total que trae el reporte del SIF. Así sabes que el dashboard leyó todo y que los reportes cuadran entre sí.</p></div></div>
+      <div class="grid g-kpi">
+        ${kpiCard('Comparaciones', int(res.length), int(reports().filter(r => r.key).length) + ' reportes revisados', '#38bdf8')}
+        ${kpiCard('Cuadran exacto', int(ok), pct(ok / (res.length || 1), 1) + ' · tolerancia 5 centavos', '#34d399')}
+        ${kpiCard('Diferencias explicadas', int(expl), 'por fecha de impresión', '#fbbf24')}
+        ${kpiCard('Diferencias sin explicar', int(bad - expl), bad - expl ? 'revisa abajo' : 'todo cuadra', bad - expl ? '#f87171' : '#34d399')}
+      </div>
+      <div class="card mt"><h3>Detalle del cuadre</h3><div id="cuTbl"></div></div>`;
+    enableTilt(v);
+    const opts = `<select class="sel" id="fCu"><option value="">Todas</option><option value="no">Solo diferencias</option>${[...new Set(res.map(r => r.grupo))].map(g => `<option value="g:${esc(g)}">${esc(g)}</option>`).join('')}</select>`;
+    const tb = table($('#cuTbl'), [
+      { h: 'Estado', v: r => r.ok ? 0 : r.nota ? 1 : 2, f: (s) => `<span class="badge ${s === 0 ? 'b0' : s === 1 ? 'b2' : 'b4'}">${s === 0 ? 'Cuadra' : s === 1 ? 'Explicada' : 'Diferencia'}</span>` },
+      { h: 'Tipo', v: r => r.grupo }, { h: 'Reporte', v: r => r.reporte }, { h: 'Concepto', v: r => r.concepto },
+      { h: 'Dashboard / detalle', v: r => r.a, n: 1, f: x => nf2.format(x) }, { h: 'Total del reporte', v: r => r.b, n: 1, f: x => nf2.format(x) },
+      { h: 'Diferencia', v: r => r.diff, n: 1, f: x => `<span style="color:${Math.abs(x) <= .05 ? '#34d399' : '#fbbf24'}">${nf2.format(x)}</span>` }, { h: 'Nota', v: r => r.nota }
+    ], res, { sort: 0, dir: -1, pageSize: 60, toolsHtml: opts });
+    $('#fCu').onchange = e => { const f = e.target.value; tb.setFilter(!f ? null : f === 'no' ? (r => !r.ok) : (r => r.grupo === f.slice(2))); };
+  }
+
   // ---------- META DE COBROS ----------
   function renderMeta() {
     const v = $('#v-meta'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
@@ -540,6 +568,24 @@
         <div class="card"><h3>Saldos por rubro de la cartera</h3><div id="iRub" class="chart"></div></div>
         <div class="card"><h3>Recaudo por forma de pago</h3><div id="iForma" class="chart"></div></div>
       </div>
+      ${a.deep && a.deep.seguro ? `
+      <div class="grid g-kpi mt">
+        ${kpiCard('Asegurados', int(k.segAsegurados), 'saldo asegurado ' + short(a.deep.seguro.saldoAsegurado), '#f472b6')}
+        ${kpiCard('Préstamos sin seguro', int(a.deep.seguro.sinSeguroN), short(a.deep.seguro.sinSeguroSaldo) + ' de saldo', '#fb7185')}
+        ${kpiCard('Seguro a pagar', short(k.segPrima * 1.05), 'prima ' + short(k.segPrima) + ' + ITBMS 5%', '#a78bfa')}
+        ${kpiCard('Saldo FECI', short(k.feciSaldo), int(a.deep.feci.prestamos) + ' préstamos con FECI', '#22d3ee')}
+        ${kpiCard('FECI devengado', short(a.deep.feci.devengado), 'de ' + short(a.deep.feci.feciTotal) + ' generado', '#38bdf8')}
+        ${kpiCard('Pagos de FECI del mes', short(k.feciPagosMes), 'FECI del mes ' + short(k.feciMes), '#34d399')}
+      </div>
+      <div class="grid g3 mt">
+        <div class="card"><h3>Seguro de vida por edad <small>prima y asegurados</small></h3><div id="iSegAge" class="chart"></div></div>
+        <div class="card"><h3>Seguro por aseguradora y sexo</h3><div id="iSegSex" class="chart"></div></div>
+        <div class="card"><h3>Saldo de seguro por tramo de mora</h3><div id="iSegB" class="chart"></div></div>
+      </div>
+      <div class="grid g2 mt">
+        <div class="card"><h3>FECI: saldo por tramo de mora</h3><div id="iFeciB" class="chart"></div></div>
+        <div class="card"><h3>Préstamos vencidos por antigüedad</h3><div id="iVencAge" class="chart"></div></div>
+      </div>` : ''}
       <div class="grid g2 mt">
         <div class="card"><h3>Préstamos cancelados en el mes</h3><div id="iCanc">${md ? '' : needDetail()}</div></div>
         <div class="card"><h3>Préstamos que vencen en el periodo</h3><div id="iVenc">${md ? '' : needDetail()}</div></div>
@@ -553,6 +599,20 @@
     const rub = [['Capital', k.rubCapital], ['Intereses', k.rubInteres], ['Seguro vida', k.rubSegVida], ['FECI', k.rubFeci], ['Manejo', k.rubManejo]];
     chart('iRub', { tooltip: tip({ valueFormatter: v => money0(v) }), grid: { left: 60, right: 14, top: 30, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: rub.map(r => r[0]) }, axisStyle), yAxis: { type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine }, series: cylinder(rub.map(r => r[0]), rub.map(r => r[1]), PAL, { w: 34, label: v => short(v) }) });
     chart('iForma', { tooltip: { trigger: 'item', formatter: p => `${p.name}<br><b>${money(p.value)}</b> · ${p.percent}%` }, series: [{ type: 'pie', radius: ['50%', '75%'], center: ['50%', '52%'], startAngle: 200, itemStyle: { borderRadius: 12, borderColor: '#0b1226', borderWidth: 4 }, label: { color: '#e8eeff', formatter: p => `${p.name}\n${short(p.value)}` }, data: [{ name: 'Efectivo / depósito', value: k.recaudoEfectivo, itemStyle: { color: '#38bdf8' } }, { name: 'Cheque', value: k.recaudoCheque, itemStyle: { color: '#818cf8' } }] }] });
+    const dp = a.deep;
+    if (dp && dp.seguro) {
+      const sa = dp.seguro.segAge;
+      chart('iSegAge', { tooltip: tip(), legend: { top: 0, textStyle: { color: '#9fb0d8' } }, grid: { left: 50, right: 40, top: 36, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: sa.map(x => x.k) }, axisStyle), yAxis: [{ type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => '$' + v }, splitLine: axisStyle.splitLine }, { type: 'value', axisLabel: { color: '#9fb0d8' }, splitLine: { show: false } }],
+        series: [{ name: 'Prima', type: 'bar', barWidth: '50%', data: sa.map(x => x.prima), itemStyle: { color: grad('#f472b6', '#831843'), borderRadius: [6, 6, 0, 0] }, tooltip: { valueFormatter: v => money(v) } }, { name: 'Asegurados', type: 'line', yAxisIndex: 1, data: sa.map(x => x.n), symbolSize: 9, lineStyle: { color: '#e8eeff' }, itemStyle: { color: '#e8eeff' } }] });
+      const ss = dp.seguro.segSex; const sg = Object.entries(a.segAseg || {});
+      chart('iSegSex', { tooltip: { trigger: 'item', formatter: p => `${p.seriesName}<br>${p.name}: <b>${money(p.value)}</b> · ${p.percent}%` }, legend: { bottom: 0, textStyle: { color: '#9fb0d8', fontSize: 11 } },
+        series: [{ name: 'Aseguradora', type: 'pie', radius: ['0%', '38%'], center: ['50%', '45%'], label: { show: false }, data: sg.map(([n, v], i) => ({ name: n.replace(/^\d+\s*/, ''), value: v, itemStyle: { color: ['#a78bfa', '#64748b', '#38bdf8'][i % 3] } })) }, { name: 'Sexo', type: 'pie', radius: ['50%', '70%'], center: ['50%', '45%'], itemStyle: { borderColor: '#0b1226', borderWidth: 3, borderRadius: 8 }, label: { color: '#e8eeff', formatter: p => `${p.name}
+${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle: { color: ['#38bdf8', '#f472b6', '#94a3b8'][i] } })) }] });
+      chart('iSegB', { tooltip: tip({ valueFormatter: v => money0(v) }), grid: { left: 54, right: 10, top: 20, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: C.BUCKETS }, axisStyle), yAxis: { type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine }, series: cylinder(C.BUCKETS, dp.seguro.segB.map(x => x.seg), BCOL, { w: 24, label: v => short(v) }) });
+      chart('iFeciB', { tooltip: tip({ valueFormatter: v => money0(v) }), grid: { left: 54, right: 10, top: 20, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: C.BUCKETS }, axisStyle), yAxis: { type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine }, series: cylinder(C.BUCKETS, dp.feci.byBucket.map(x => x.feci), ['#22d3ee', '#38bdf8', '#818cf8', '#a78bfa', '#f472b6', '#fb7185'], { w: 28, label: v => short(v) }) });
+      const va = dp.vencAge || [];
+      chart('iVencAge', { tooltip: tip({ formatter: ps => { const x = va[ps[0].dataIndex]; return `${x.k}<br>${x.n} préstamos<br><b>${money0(x.saldo)}</b>`; } }), grid: { left: 10, right: 60, top: 10, bottom: 10, containLabel: true }, xAxis: { type: 'value', axisLabel: { show: false }, splitLine: axisStyle.splitLine }, yAxis: { type: 'category', inverse: true, data: va.map(x => x.k + ' vencido'), axisLabel: { color: '#cbd5f5' } }, series: [{ type: 'bar', barWidth: 18, data: va.map((x, i) => ({ value: x.saldo, itemStyle: { color: grad(['#fbbf24', '#fb923c', '#f87171', '#e11d48'][i], '#3b0d1d', true), borderRadius: [0, 8, 8, 0] } })), label: { show: true, position: 'right', color: '#e8eeff', formatter: p => short(p.value) + ' · ' + va[p.dataIndex].n } }] });
+    }
     if (md) {
       table($('#iCanc'), [{ h: 'Contrato', v: x => x.id }, { h: 'Cliente', v: x => x.nombre }, { h: 'Fecha', v: x => x.fcancel, f: dd }, { h: 'Monto', v: x => x.monto, n: 1, f: money, sum: 1 }, { h: 'Intereses', v: x => x.intereses, n: 1, f: money, sum: 1 }, { h: 'GM', v: x => x.gm, n: 1, f: money, sum: 1 }], md.R.cancelados || [], { search: false, total: true, sort: 3 });
       table($('#iVenc'), [{ h: 'Contrato', v: x => x.id }, { h: 'Cliente', v: x => x.nombre }, { h: 'Vence', v: x => x.fvenc, f: dd }, { h: 'Saldo', v: x => x.saldo, n: 1, f: money, sum: 1 }, { h: 'Por cobrar', v: x => x.totalFact, n: 1, f: money, sum: 1 }, { h: 'Oficial', v: x => x.oficial }], md.R.aVencer || [], { search: false, total: true, sort: 3 });
@@ -643,7 +703,8 @@
     loader(true, 'Armando el análisis…', 30);
     try {
       await loadScript('exceljs');
-      const wb = await Exporters.analysisWorkbook(md, a, S.config);
+      let cq = null; try { if (md) cq = C.reconcile(reports(), md, a); } catch (er) { }
+      const wb = await Exporters.analysisWorkbook(md, a, S.config, cq);
       const buf = await wb.xlsx.writeBuffer(); loader(false);
       await saveFile(`Analisis de cartera ${a.label}.xlsx`, new Blob([buf]));
     } catch (e) { loader(false); console.error(e); toast('Error: ' + e.message); }
@@ -674,6 +735,7 @@
       ...(a.deep ? [`<div class="slide"><div class="band">Vencimientos y tasas<small>tasa promedio ${a.deep.tasaProm.toFixed(2)}% · plazo ${Math.round(a.deep.plazoProm)} meses</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP11a" class="schart"></div><div id="sP11b" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">Meta de cobros por oficial<small>${esc(a.label)}</small></div><div class="body">${metaOfiSlideHtml(D)}</div>${foot('')}</div>`,
         `<div class="slide"><div class="band">Clientes a gestionar<small>mayor monto pendiente de la meta</small></div><div class="body">${gestionSlideHtml(D)}</div>${foot('')}</div>`] : []),
+      ...(a.deep && a.deep.seguro ? [`<div class="slide"><div class="band">Seguro de vida y FECI<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP12a" class="schart"></div><div id="sP12b" class="schart"></div></div>${foot('')}</div>`] : []),
       `<div class="slide"><div class="band">Ingresos del mes<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1.5fr;gap:3%"><div class="skpis" style="grid-template-columns:1fr 1fr;gap:4%">${[['Intereses', money0(k.interesesMes)], ['Gastos de manejo', money0(k.gmMes)], ['FECI', money0(k.feciMes)], ['Prima seguro vida', money0(k.segPrima)], ['Cancelados', int(k.canceladosN) + ' · ' + money0(k.canceladosMonto)], ['Vencidos con saldo', int(k.vencidosRepN || k.vencidosN)]].map(x => `<div class="skpi"><div class="a">${x[0]}</div><div class="b" style="font-size:clamp(10px,2vw,22px)">${x[1]}</div></div>`).join('')}</div><div id="sP10" class="schart"></div></div>${foot('')}</div>`,
       ...(hist ? [`<div class="slide"><div class="band">Evolución mensual<small>cartera, recaudo y PAR30</small></div><div class="body"><div id="sP6" class="schart"></div></div>${foot(7)}</div>`] : []),
       `<div class="slide"><div class="band">Hallazgos</div><div class="body"><ul class="slist">${D.ins.slice(0, 6).map(i => `<li>${esc(i.x)}</li>`).join('')}</ul></div>${foot(hist ? 8 : 7)}</div>`,
@@ -737,6 +799,9 @@
     if (on('sP10')) { const ip = (a.interesesProducto || []).slice().sort((x, y) => (y.int + y.gm) - (x.int + x.gm)); chart('sP10', Object.assign({}, light, { legend: { top: 0, textStyle: { color: '#334155' } }, grid: { left: 10, right: 30, top: 30, bottom: 10, containLabel: true }, xAxis: { type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) }, splitLine: ax.splitLine }, yAxis: { type: 'category', inverse: true, data: ip.map(x => shortName(x.k)), axisLabel: { color: '#0f1f3d', fontSize: 10.5 } }, series: [{ name: 'Intereses', type: 'bar', stack: 'i', data: ip.map(x => x.int), itemStyle: { color: '#1d4ed8' } }, { name: 'Gastos de manejo', type: 'bar', stack: 'i', data: ip.map(x => x.gm), itemStyle: { color: '#f59e0b' } }] })); }
     if (on('sP11a') && a.deep) { const hb = (id, rows, cols, t) => chart(id, Object.assign({}, light, { title: { text: t, left: 'center', textStyle: { fontSize: 13, color: '#0f1f3d' } }, grid: { left: 10, right: 60, top: 30, bottom: 10, containLabel: true }, xAxis: { type: 'value', show: false }, yAxis: { type: 'category', inverse: true, data: rows.map(x => x.k), axisLabel: { color: '#0f1f3d', fontSize: 10.5 }, axisLine: { show: false }, axisTick: { show: false } }, series: [{ type: 'bar', barWidth: '55%', data: rows.map((x, i) => ({ value: x.saldo, itemStyle: { color: cols[i % cols.length] } })), label: { show: true, position: 'right', color: '#0f1f3d', formatter: p => short(p.value) } }] }));
       hb('sP11a', a.deep.byMaturity, ['#dc2626', '#f59e0b', '#84cc16', '#16a34a', '#0ea5e9', '#6366f1'], 'Cuándo vence el saldo'); hb('sP11b', a.deep.byRate, ['#0ea5e9', '#1d4ed8', '#6366f1', '#a855f7', '#ec4899', '#64748b'], 'Saldo por tasa de interés'); }
+    if (on('sP12a') && a.deep && a.deep.seguro) {
+      const sa = a.deep.seguro.segAge; chart('sP12a', Object.assign({}, light, { title: { text: `Seguro de vida · prima ${money0(D.k.segPrima)} · ${D.k.segAsegurados} asegurados`, left: 'center', textStyle: { fontSize: 12, color: '#0f1f3d' } }, grid: { left: 50, right: 20, top: 40, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: sa.map(x => x.k) }, ax), yAxis: Object.assign({ type: 'value', axisLabel: { color: '#334155', formatter: v => '$' + v } }, { splitLine: ax.splitLine }), series: [{ type: 'bar', barWidth: '55%', data: sa.map(x => x.prima), itemStyle: { color: '#db2777', borderRadius: [6, 6, 0, 0] }, label: { show: true, position: 'top', color: '#0f1f3d', formatter: p => money0(p.value) + ' · ' + sa[p.dataIndex].n } }] }));
+      const fb = a.deep.feci.byBucket; chart('sP12b', Object.assign({}, light, { title: { text: `FECI · saldo ${money0(D.k.feciSaldo)} · pagos del mes ${money0(D.k.feciPagosMes)}`, left: 'center', textStyle: { fontSize: 12, color: '#0f1f3d' } }, grid: { left: 60, right: 20, top: 40, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: fb.map(x => x.k) }, ax), yAxis: Object.assign({ type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) } }, { splitLine: ax.splitLine }), series: [{ type: 'bar', barWidth: '55%', data: fb.map(x => x.feci), itemStyle: { color: '#0891b2', borderRadius: [6, 6, 0, 0] }, label: { show: true, position: 'top', color: '#0f1f3d', formatter: p => short(p.value) } }] })); }
     if (on('sP6')) { const H = months().map(m => S.history[m]); chart('sP6', Object.assign({}, light, { tooltip: tip(), legend: { top: 0, textStyle: { color: '#334155' } }, grid: { left: 60, right: 50, top: 34, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: H.map(h => h.label) }, ax), yAxis: [{ type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) }, splitLine: ax.splitLine }, { type: 'value', axisLabel: { color: '#334155', formatter: v => v + '%' }, splitLine: { show: false } }], series: [{ name: 'Cartera', type: 'bar', data: H.map(h => h.kpi.cartera), itemStyle: { color: '#1d4ed8' } }, { name: 'Recaudo', type: 'bar', data: H.map(h => h.kpi.recaudo), itemStyle: { color: '#22c55e' } }, { name: 'PAR30 %', type: 'line', yAxisIndex: 1, data: H.map(h => +(h.kpi.par30Pct * 100).toFixed(1)), lineStyle: { color: '#dc2626', width: 3 }, itemStyle: { color: '#dc2626' } }] })); }
   }
   async function downloadPPT(D) {
@@ -798,6 +863,13 @@
         const gr = gestionRows(10);
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Clientes a gestionar', 'mayor monto pendiente de la meta');
         s.addTable([[HD('Cliente'), HD('Patrono'), HD('Oficial'), HD('Tramo'), HD('Meta'), HD('Cobrado'), HD('Falta')], ...gr.map(x => [x.l.nombre, String(x.l.patrono).slice(0, 30), x.l.oficial, { text: x.l.clas, options: { bold: true, color: x.l.bucket > 1 ? 'DC2626' : x.l.bucket ? 'D97706' : '16A34A' } }, money0(x.meta), money0(x.l.pagadoMes), { text: money0(x.falta), options: { bold: true } }])], { x: 0.5, y: 1.2, w: 12.3, fontSize: 12, rowH: 0.42, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: [3.6, 3.2, 1.3, 1.1, 1.0, 1.0, 1.1] });
+      }
+      if (a.deep && a.deep.seguro) {
+        const sa = a.deep.seguro.segAge, fb = a.deep.feci.byBucket;
+        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Seguro de vida y FECI', a.label);
+        s.addChart(pptx.ChartType.bar, [{ name: 'Prima', labels: sa.map(x => x.k), values: sa.map(x => +x.prima.toFixed(2)) }], { x: 0.5, y: 1.2, w: 6.1, h: 5.4, barDir: 'col', chartColors: ['DB2777'], showValue: true, dataLabelFormatCode: '$#,##0', valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: `Seguro de vida · prima ${money0(k.segPrima)} · ${k.segAsegurados} asegurados`, titleFontSize: 12 });
+        s.addChart(pptx.ChartType.bar, [{ name: 'Saldo FECI', labels: fb.map(x => x.k), values: fb.map(x => Math.round(x.feci)) }], { x: 6.8, y: 1.2, w: 6.1, h: 5.4, barDir: 'col', chartColors: ['0891B2'], showValue: true, dataLabelFormatCode: '$#,##0', valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: `FECI · saldo ${money0(k.feciSaldo)} · pagos del mes ${money0(k.feciPagosMes)}`, titleFontSize: 12 });
+        s.addText(`Préstamos sin seguro de vida: ${a.deep.seguro.sinSeguroN} (${money0(a.deep.seguro.sinSeguroSaldo)})   ·   Seguro a pagar con ITBMS: ${money0(k.segPrima * 1.05)}`, { x: 0.5, y: 6.65, w: 12.3, h: 0.35, fontSize: 12, color: BLUE, bold: true });
       }
       {
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Ingresos del mes', a.label);
@@ -889,12 +961,13 @@
       const md = C.buildModel(merged.filter(r => r.key), S.config);
       md.month = month;
       const ag = C.aggregate(md, S.config);
+      try { const rc = C.reconcile(merged.filter(r => r.key), md, ag); ag.cuadre = { total: rc.length, ok: rc.filter(x => x.ok).length, explicadas: rc.filter(x => !x.ok && x.nota).length }; } catch (e) { console.error(e); }
       S.models[month] = { model: md, reports: merged };
       S.history[month] = ag; S.current = month;
       const saved = await saveMonth(ag);
       loader(false);
       const unk = out.filter(r => !r.key).length;
-      toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}. ${saved ? 'Guardado en tu historial.' : ''}`, 5000);
+      const cq = ag.cuadre; toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}.${cq ? ` Cuadre: ${cq.ok} de ${cq.total} exactos${cq.total - cq.ok - cq.explicadas ? `, ${cq.total - cq.ok - cq.explicadas} por revisar` : ''}.` : ''}`, 6000);
       renderAll(); go('resumen');
     } catch (e) { loader(false); console.error(e); toast('Error al leer: ' + e.message, 6000); }
   }
@@ -931,7 +1004,7 @@
   });
 
   // ---------- navegación ----------
-  const VIEWS = { resumen: renderResumen, morosidad: renderMora, analisis: renderAnalisis, meta: renderMeta, ingresos: renderIngresos, excel: renderExcel, presentacion: renderPres, reportes: renderReportes, cargar: renderCargar };
+  const VIEWS = { resumen: renderResumen, morosidad: renderMora, analisis: renderAnalisis, meta: renderMeta, ingresos: renderIngresos, excel: renderExcel, presentacion: renderPres, cuadre: renderCuadre, reportes: renderReportes, cargar: renderCargar };
   const rendered = {};
   function go(tab) {
     if (!VIEWS[tab]) tab = 'resumen';
