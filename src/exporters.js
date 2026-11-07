@@ -4,6 +4,7 @@
   const EX = () => (typeof ExcelJS !== 'undefined') ? ExcelJS : (typeof require !== 'undefined' ? require('exceljs') : null);
   const CoreLib = (typeof Core !== 'undefined') ? Core : (typeof require !== 'undefined' ? require('./core.js') : null);
   const ACC = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-';
+  const ACCN = '#,##0.00';
   const toDate = s => { if (!s) return null; const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
   const WIDTHS = { A: 6.6, B: 20.4, C: 50.4, D: 43.4, E: 11.6, F: 10.6, G: 11.4, H: 15.6, I: 13.1, J: 10.6, K: 12.7, L: 10.6, M: 10.7, U: 18.6, V: 4, W: 11.1, X: 10.7, Y: 42.7, Z: 12.6, AA: 9.4, AB: 8.3, AC: 5.9, AD: 8, AE: 11.4, AF: 11.4, AG: 11.4, AH: 10.7 };
 
@@ -28,16 +29,16 @@
   }
   const PCT = '0.0%';
   function addMetaSheets(wb, model, agg, config, prevAgg) {
-    const mf = CoreLib.metaFromAgg(prevAgg || agg, config && config.meta);
-    const next = CoreLib.metaFromAgg(agg, config && config.meta);
+    const mf = CoreLib.metaFromAgg(prevAgg || agg, config && config.meta, prevAgg ? 'sig' : 'mes');
+    const next = CoreLib.metaFromAgg(agg, config && config.meta, 'sig');
     const real = agg.kpi.recaudo;
     const s = wb.addWorksheet('Meta de cobros');
     s.columns = [{ width: 44 }, { width: 18 }];
     s.getCell('A1').value = `Meta de cobros — ${agg.label}`; s.getCell('A1').font = { bold: true, size: 14, color: { argb: BLUE } };
     const c = mf.cfg; const lines = [
-      ['Meta del mes', mf.meta, ACC], ['  Cuotas del mes', mf.metaCuotas, ACC], ['  Recuperación de mora', mf.metaRecup, ACC], ['Cobrado (informe recaudado)', real, ACC],
+      ['Meta del mes', mf.meta, ACC], ['  Letras del mes', mf.metaCuotas, ACC], ['  Recuperación de mora', mf.metaRecup, ACC], ['Cobrado (informe recaudado)', real, ACC],
       ['Cumplimiento', mf.meta ? real / mf.meta : 0, PCT], ['Diferencia (cobrado − meta)', real - mf.meta, ACC], ['', null], [`Meta propuesta ${CoreLib.monthLabel(CoreLib.nextMonth(agg.month))}`, next.meta, ACC], ['', null],
-      ['Supuestos', null], ['Cuotas de préstamos con mora hasta (días)', c.cuotaHastaDias], ['Efectividad esperada en cuotas', c.efectividadCuotas / 100, PCT],
+      ['Supuestos', null], ['Letras de préstamos con mora hasta (días)', c.cuotaHastaDias >= 1e8 ? 'Todos' : c.cuotaHastaDias], ['Efectividad esperada en letras', c.efectividadCuotas / 100, PCT],
       ...CoreLib.BUCKETS.slice(1).map((b, i) => [`Recuperar del vencido ${b} días`, (c.recupera[i + 1] || 0) / 100, '0.00%']),
       ['Base de la meta', prevAgg ? `Cierre de ${prevAgg.label}` : `Estimada con el cierre de ${agg.label}`]
     ];
@@ -45,7 +46,7 @@
     tableSheet(wb, 'Meta por tramo', [['Tramo', 14], ['# Préstamos', 12, null, 1], ['Saldo', 16, ACC, 1], ['Saldo moroso', 16, ACC, 1], ['Meta cuotas', 16, ACC, 1], ['Meta recuperación', 16, ACC, 1], ['Meta total', 16, ACC, 1], ['Cobrado', 16, ACC, 1], ['Cumplimiento', 12, PCT]],
       mf.rows.map((r, i) => { const re = (agg.metaRows[i] || {}).real || 0; return [r.k, r.n, r.saldo, r.moroso, r.metaCuotas, r.metaRecup, r.meta, re, r.meta ? re / r.meta : null]; }), { total: true, title: 'Meta vs cobrado por tramo de mora', sub: agg.label });
     if (model && model.loans) {
-      const per = CoreLib.computeMeta(model.loans, config && config.meta).perLoan;
+      const per = CoreLib.computeMeta(model.loans, config && config.meta, 'mes').perLoan;
       const grp = (f) => { const m = new Map(); model.loans.forEach(l => { const k = f(l) || '—'; const g = m.get(k) || { k, n: 0, saldo: 0, meta: 0, real: 0, noPagaron: 0 }; const mt = per.get(l.id) || 0; g.n++; g.saldo += l.saldo; g.meta += mt; g.real += l.pagadoMes; if (mt > 0.005 && l.pagadoMes <= 0) g.noPagaron++; m.set(k, g); }); return [...m.values()].sort((a, b) => b.meta - a.meta); };
       const gcols = (t) => [[t, 42], ['# Préstamos', 12, null, 1], ['Saldo', 16, ACC, 1], ['Meta', 16, ACC, 1], ['Cobrado', 16, ACC, 1], ['Falta', 16, ACC, 1], ['Cumplimiento', 12, PCT], ['No pagaron', 12, null, 1]];
       const grow = g => [g.k, g.n, g.saldo, Math.round(g.meta * 100) / 100, g.real, Math.max(0, Math.round((g.meta - g.real) * 100) / 100), g.meta ? g.real / g.meta : null, g.noPagaron];
@@ -56,6 +57,50 @@
       tableSheet(wb, 'Lista de cobro', lc, rows, { total: true, title: 'Lista de cobro — quién debía pagar y cuánto falta', sub: agg.label + ' · ordenada por lo que falta cobrar' });
       tableSheet(wb, 'No pagaron', lc, rows.filter(r => r[13] === 'No pagó'), { total: true, title: 'Clientes con meta que no pagaron en el mes', sub: agg.label });
     }
+  }
+  // Hoja "Letras de la cartera — meta de cobro mensual" (formato del reporte del usuario), agrupada por sucursal
+  function addLetrasSheet(wb, model, ym, opts) {
+    if (!model || !model.loans) return;
+    opts = opts || {};
+    const esMes = ym === model.month;
+    const title = `Letras ${CoreLib.monthLabel(ym)}`;
+    const s = wb.addWorksheet(title.slice(0, 31));
+    const cols = [['N° Contrato', 19], ['Nombre del Cliente', 38], ['Cédula / RUC', 13], ['Saldo Capital con Intereses', 15, ACCN], ['Monto solicitado', 14, ACCN], ['Fecha de Inicio', 12, 'dd/mm/yyyy'], ['Fecha del último pago', 12, 'dd/mm/yyyy'], ['Saldo al día', 14, ACCN], ['Mora', 14, ACCN], ['Letras vencidas por cobrar (atrasadas)', 15, ACCN], ['Días de Mora', 9, '#,##0'], ['Fecha de la primera letra', 12, 'dd/mm/yyyy'], ['Fecha de la última letra', 12, 'dd/mm/yyyy'], ['Letra', 11, ACCN], ['Forma Pago', 11], ['Letras no vencidas (lo que le falta)', 15, ACCN], [esMes ? 'Vencieron en el mes' : 'Vencen este mes', 13, ACCN], ['Meta del mes (a cobrar)', 14, ACCN]];
+    if (esMes) cols.push(['Cobrado en el mes', 14, ACCN], ['Falta', 13, ACCN], ['Estado', 10]);
+    cols.push(['Grupo', 16]);
+    const W = cols.length; const L = c => s.getColumn(c).letter;
+    const hdr = (r, text, o) => { s.mergeCells(r, 1, r, W); const c = s.getCell(r, 1); c.value = text; c.font = Object.assign({ name: 'Calibri' }, o); c.alignment = { horizontal: 'center' }; };
+    hdr(1, 'GRUPO DE SERVICIOS FINANCIEROS', { bold: true, size: 12 });
+    hdr(2, 'Letras de la cartera — meta de cobro mensual', { bold: true, size: 11 });
+    hdr(3, `${CoreLib.monthLabel(ym)} · con la cartera al cierre de ${CoreLib.monthLabel(model.month)}`, { size: 10 });
+    hdr(4, `Generado el ${new Date().toLocaleString('es-PA')}`, { italic: true, size: 9, color: { argb: 'FF64748B' } });
+    const hr = s.getRow(6); hr.height = 42;
+    cols.forEach((c, j) => { const cell = hr.getCell(j + 1); cell.value = c[0]; cell.font = { bold: true, size: 10 }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEBE2' } }; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; cell.border = { bottom: { style: 'thin' } }; s.getColumn(j + 1).width = c[1]; });
+    const sumCols = ['Saldo Capital con Intereses', 'Saldo al día', 'Mora', 'Letras vencidas por cobrar (atrasadas)', 'Letras no vencidas (lo que le falta)', esMes ? 'Vencieron en el mes' : 'Vencen este mes', 'Meta del mes (a cobrar)', 'Cobrado en el mes', 'Falta'].map(h => cols.findIndex(c => c[0] === h)).filter(i => i >= 0);
+    const groups = new Map();
+    model.loans.slice().sort((a, b) => String(a.sucursal).replace(/^\d+\s+/, '').localeCompare(String(b.sucursal).replace(/^\d+\s+/, '')) || a.id.localeCompare(b.id)).forEach(l => { const g = String(l.sucursal || '—').replace(/^\d+\s+/, ''); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(l); });
+    let r = 7; const totRows = [];
+    for (const [g, arr] of groups) {
+      const r0 = r;
+      for (const l of arr) {
+        const lt = esMes ? (l.letrasMes || 0) : (l.letrasSig || 0);
+        const v = [l.id, l.nombre, l.cedula, l.saldo, l.monto, toDate(l.fprest), CoreLib.validDate(l.fult) ? toDate(l.fult) : null, l.corriente, l.totalMoroso, l.factXCobrar, l.dias, toDate(l.fini), toDate(l.fvenc), l.letra, CoreLib.freqName(l.freq).toUpperCase(), l.corriente, lt, lt];
+        if (esMes) { const falta = Math.max(0, Math.round((lt - l.pagadoMes) * 100) / 100); v.push(l.pagadoMes, falta, lt <= 0 ? (l.pagadoMes > 0 ? 'Abonó' : '—') : l.pagadoMes <= 0 ? 'No pagó' : falta > 0.01 ? 'Parcial' : 'Pagó'); }
+        v.push(g);
+        const row = s.getRow(r++); v.forEach((x, j) => { const cell = row.getCell(j + 1); cell.value = x; if (cols[j][2]) cell.numFmt = cols[j][2]; cell.font = { size: 10 }; });
+      }
+      const tr = s.getRow(r); tr.getCell(1).value = `Total ${g}`;
+      sumCols.forEach(j => { tr.getCell(j + 1).value = { formula: `SUBTOTAL(9,${L(j + 1)}${r0}:${L(j + 1)}${r - 1})` }; tr.getCell(j + 1).numFmt = ACCN; });
+      tr.eachCell({ includeEmpty: true }, c => { c.font = { bold: true, size: 10 }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5FB' } }; c.border = { top: { style: 'thin' } }; });
+      totRows.push(r); r++;
+    }
+    const gt = s.getRow(r); gt.getCell(1).value = 'GRAN TOTAL';
+    sumCols.forEach(j => { gt.getCell(j + 1).value = { formula: totRows.map(t => `${L(j + 1)}${t}`).join('+') }; gt.getCell(j + 1).numFmt = ACCN; });
+    gt.eachCell({ includeEmpty: true }, c => { c.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } }; });
+    s.getCell(r + 2, 1).value = esMes ? 'Vencieron en el mes: letras con fecha dentro del mes (quincenal: días 15 y fin de mes; mensual: día de la última letra). Cobrado: informe recaudado del mes.' : 'Vencen este mes: letras con fecha dentro del mes, sin pasar de las letras no vencidas al cierre. Quincenal: días 15 y fin de mes; mensual: día de la última letra.';
+    s.getCell(r + 2, 1).font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
+    s.views = [{ state: 'frozen', xSplit: 2, ySplit: 6 }];
+    s.autoFilter = { from: { row: 6, column: 1 }, to: { row: r - 1, column: W } };
   }
   function addTopSheet(wb, model, agg, n) {
     if (!model || !model.loans) return;
@@ -145,7 +190,7 @@
       block('Clasificación', CoreLib.BUCKETS.map(b => by(x => x[10]).find(g => g.k === b) || { k: b, n: 0, saldo: 0, moroso: 0 }));
       block('Patrono', by(x => x[2]).sort((a, b) => b.saldo - a.saldo));
     }
-    if (extra.meta && opts.agg) addMetaSheets(wb, model, opts.agg, config, opts.prevAgg);
+    if (extra.meta && opts.agg) { addLetrasSheet(wb, model, model.month); addLetrasSheet(wb, model, CoreLib.nextMonth(model.month)); addMetaSheets(wb, model, opts.agg, config, opts.prevAgg); }
     if (extra.top25 && opts.agg) addTopSheet(wb, model, opts.agg, 25);
     if (extra.analisis && opts.agg) addDeepSheets(wb, opts.agg);
     return wb;
@@ -153,6 +198,7 @@
 
   async function metaWorkbook(model, agg, config, prevAgg) {
     const wb = new (EX().Workbook)(); wb.created = new Date(); wb.creator = 'Dashboard de Cartera';
+    if (model && model.loans) { addLetrasSheet(wb, model, model.month); addLetrasSheet(wb, model, CoreLib.nextMonth(model.month)); }
     addMetaSheets(wb, model, agg, config, prevAgg);
     return wb;
   }
@@ -191,7 +237,7 @@
     sheet('Por oficial', [['Oficial', 20], ['# Préstamos', 12], ['Saldo', 16, ACC], ['Moroso', 16, ACC], ['Cuota mensual', 16, ACC], ['Cobrado', 16, ACC]], agg.byOficial.map(b => [b.k, b.n, b.saldo, b.moroso, b.cuotaMes, b.pagado]));
     sheet('Meta de cobros', [['Tramo', 14], ['# Préstamos', 12], ['Cuotas del mes', 16, ACC], ['Meta cuotas', 16, ACC], ['Meta recuperación', 16, ACC], ['Meta total', 16, ACC], ['Cobrado', 16, ACC]], agg.metaRows.map(b => [b.k, b.n, b.cuotas, b.metaCuotas, b.metaRecup, b.meta, b.real]));
     if (model && model.loans) {
-      const meta = CoreLib.computeMeta(model.loans, config && config.meta);
+      const meta = CoreLib.computeMeta(model.loans, config && config.meta, 'mes');
       sheet('Gestión de cobro', [['Contrato', 20], ['Cliente', 40], ['Patrono', 40], ['Oficial', 14], ['Tramo', 12], ['Días', 8], ['Cuota mensual', 14, ACC], ['Moroso', 14, ACC], ['Meta', 14, ACC], ['Cobrado', 14, ACC], ['Pendiente', 14, ACC]],
         model.loans.map(l => { const m = meta.perLoan.get(l.id) || 0; return [l.id, l.nombre, l.patrono, l.oficial, l.clas, l.dias, l.cuotaMes, l.totalMoroso, Math.round(m * 100) / 100, l.pagadoMes, Math.max(0, Math.round((m - l.pagadoMes) * 100) / 100)]; })
           .sort((a, b) => b[10] - a[10]));
@@ -201,6 +247,7 @@
     return wb;
   }
 
-  const api = { gsfWorkbook, analysisWorkbook, metaWorkbook };
+  async function letrasWorkbook(model, ym) { const wb = new (EX().Workbook)(); wb.created = new Date(); addLetrasSheet(wb, model, ym); return wb; }
+  const api = { gsfWorkbook, analysisWorkbook, metaWorkbook, letrasWorkbook };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Exporters = api;
 })(typeof window !== 'undefined' ? window : globalThis);

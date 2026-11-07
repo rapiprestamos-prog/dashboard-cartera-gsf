@@ -168,10 +168,10 @@
     if (k.migrados) out.push({ t: 'warn', x: `Los ${int(k.migrados)} préstamos migrados suman ${short(k.carteraMig)} (${pct(mig)} de la cartera). Sin ellos, el PAR30 baja a ${pct(k.par30NMPct)} sobre ${short(k.carteraNM)}.` });
     const b = a.byBucket; const recup = b[1].moroso + b[2].moroso + b[3].moroso; const nrec = b[1].n + b[2].n + b[3].n;
     if (nrec) out.push({ t: 'warn', x: `${int(nrec)} préstamos están entre 31 y 120 días, con ${money0(recup)} en cuotas vencidas: es la mora más recuperable y debe ir primero en la gestión.` });
-    const mf = C.metaFromAgg(p || a, S.config.meta);
+    const mf = C.metaFromAgg(p || a, S.config.meta, p ? 'sig' : 'mes');
     const cumpl = mf.meta ? k.recaudo / mf.meta : 0;
     out.push({ t: cumpl >= 1 ? 'good' : cumpl >= .85 ? 'warn' : 'bad', x: `Se recaudaron ${money0(k.recaudo)} contra una meta ${p ? 'fijada al cierre anterior' : 'estimada'} de ${money0(mf.meta)}: cumplimiento ${pct(cumpl, 0)}.` });
-    const r0 = a.metaRows && a.metaRows[0]; if (r0 && r0.cuotas) out.push({ t: r0.real / r0.cuotas >= .95 ? 'good' : 'warn', x: `Los clientes al día pagaron ${money0(r0.real)} de ${money0(r0.cuotas)} en cuotas programadas (${pct(r0.real / r0.cuotas, 0)}).` });
+    const r0 = a.metaRows && a.metaRows[0]; if (r0 && (r0.cuotasMes || r0.cuotas)) out.push({ t: r0.real / (r0.cuotasMes || r0.cuotas) >= .95 ? 'good' : 'warn', x: `Los clientes al día pagaron ${money0(r0.real)} de ${money0(r0.cuotasMes != null ? r0.cuotasMes : r0.cuotas)} en letras del mes (${pct(r0.real / r0.cuotas, 0)}).` });
     if (k.canceladosN) out.push({ t: 'good', x: `${int(k.canceladosN)} préstamos se cancelaron en el mes por ${money0(k.canceladosMonto)}; parte del recaudo viene de esas cancelaciones.` });
     const topP = (a.byPatrono || []).filter(x => !/^Otros/.test(x.k)).sort((x, y) => y.par30 - x.par30)[0];
     if (topP && topP.par30) out.push({ t: 'warn', x: `El patrono con más cartera en riesgo es ${topP.k}: ${short(topP.par30)} en PAR30 (${int(topP.enMora)} de ${int(topP.n)} préstamos).` });
@@ -188,7 +188,7 @@
     if (k.migrados) out.push('Separar la cartera migrada en el reporte a junta y definir una estrategia propia (castigo, venta o cobro judicial).');
     out.push('Conciliar con cada patrono los descuentos de planilla del mes para detectar empleados que dejaron de pagar.');
     if (k.vencidosN) out.push('Revisar los préstamos vencidos con saldo para refinanciar o iniciar cobro legal.');
-    out.push('Fijar la meta del próximo mes en ' + money0(C.metaFromAgg(a, S.config.meta).meta) + ' y darle seguimiento semanal por oficial.');
+    out.push('Fijar la meta del próximo mes en ' + money0(C.metaFromAgg(a, S.config.meta, 'sig').meta) + ' y darle seguimiento semanal por oficial.');
     return out;
   }
 
@@ -206,7 +206,7 @@
     const v = $('#v-resumen'); const a = agg();
     if (!a) { v.innerHTML = emptyCTA(); return; }
     const p = prevAgg(), k = a.kpi, pk = p && p.kpi;
-    const mf = C.metaFromAgg(p || a, S.config.meta); const cumpl = mf.meta ? k.recaudo / mf.meta : 0;
+    const mf = C.metaFromAgg(p || a, S.config.meta, p ? 'sig' : 'mes'); const cumpl = mf.meta ? k.recaudo / mf.meta : 0;
     v.innerHTML = `
       <div class="vhead"><div><h2>Resumen del cierre · ${esc(a.label)}</h2><p>Foto de la cartera activa al cierre: tamaño, calidad, cobros e ingresos del mes.</p></div></div>
       <div class="grid g-kpi">
@@ -419,24 +419,24 @@
   function renderMeta() {
     const v = $('#v-meta'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
     const p = prevAgg(); const md = model(); const cfg = S.config.meta;
-    const base = p || a; const mf = C.metaFromAgg(base, cfg); const next = C.metaFromAgg(a, cfg);
+    const base = p || a; const mf = C.metaFromAgg(base, cfg, p ? 'sig' : 'mes'); const next = C.metaFromAgg(a, cfg, 'sig');
     const real = a.kpi.recaudo; const cumpl = mf.meta ? real / mf.meta : 0;
-    const thr = [30, 60, 90, 120, 365];
+    const thr = [30, 60, 90, 120, 365, 1e9]; const thrLb = v => v >= 1e8 ? 'todos (sin límite)' : v + ' días';
     v.innerHTML = `
-      <div class="vhead"><div><h2>Meta de cobros</h2><p>La meta junta dos partes: las cuotas del mes de los préstamos que siguen pagando y un % de recuperación de lo vencido por tramo. Ajusta los supuestos y todo se recalcula.</p></div>
-        <div class="tools" style="margin:0"><button class="btn pri" id="metaXls"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>Excel de meta de cobros</button></div></div>
+      <div class="vhead"><div><h2>Meta de cobros</h2><p>La meta del mes es la suma de las letras que le tocan a cada cliente ese mes (quincenal: días 15 y fin de mes; mensual: un pago), como tu reporte de letras. Si quieres, súmale un % de recuperación de lo vencido por tramo.</p></div>
+        <div class="tools" style="margin:0"><button class="btn pri" id="metaXls"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>Excel de meta de cobros (con letras)</button></div></div>
       <div class="grid g12">
         <div class="card ctrl" id="metaCtrl">
           <h3>Supuestos de la meta</h3>
-          <div class="slider"><label>Cobrar cuotas de préstamos hasta</label><output id="oThr">${cfg.cuotaHastaDias >= 365 ? '365' : cfg.cuotaHastaDias} días</output><input type="range" id="sThr" min="0" max="4" step="1" value="${Math.max(0, thr.indexOf(cfg.cuotaHastaDias))}"></div>
-          <div class="slider"><label>Efectividad esperada en cuotas</label><output id="oEf">${cfg.efectividadCuotas}%</output><input type="range" id="sEf" min="50" max="100" step="1" value="${cfg.efectividadCuotas}"></div>
-          ${C.BUCKETS.slice(1).map((b, i) => `<div class="slider"><label>Recuperar del vencido ${b} días</label><output id="oR${i + 1}">${cfg.recupera[i + 1]}%</output><input type="range" data-b="${i + 1}" class="sR" min="0" max="${i + 1 >= 4 ? 20 : 100}" step="${i + 1 >= 5 ? 0.25 : 1}" value="${cfg.recupera[i + 1]}"></div>`).join('')}
-          <button class="btn sm ghost" id="metaReset">Volver a los valores sugeridos</button>
+          <div class="slider"><label>Contar letras de préstamos con mora hasta</label><output id="oThr">${thrLb(cfg.cuotaHastaDias)}</output><input type="range" id="sThr" min="0" max="5" step="1" value="${Math.max(0, thr.indexOf(cfg.cuotaHastaDias))}"></div>
+          <div class="slider"><label>Efectividad esperada en letras</label><output id="oEf">${cfg.efectividadCuotas}%</output><input type="range" id="sEf" min="50" max="100" step="1" value="${cfg.efectividadCuotas}"></div>
+          ${C.BUCKETS.slice(1).map((b, i) => `<div class="slider"><label>Extra: recuperar del vencido ${b} días</label><output id="oR${i + 1}">${cfg.recupera[i + 1]}%</output><input type="range" data-b="${i + 1}" class="sR" min="0" max="${i + 1 >= 4 ? 20 : 100}" step="${i + 1 >= 5 ? 0.25 : 1}" value="${cfg.recupera[i + 1]}"></div>`).join('')}
+          <button class="btn sm ghost" id="metaReset">Volver al método del reporte de letras</button>
           <div class="note">Se guarda para los próximos meses. ${p ? `El cumplimiento de ${esc(a.label)} se mide contra la meta calculada con el cierre de ${esc(p.label)}.` : `Como no hay mes anterior, la meta de ${esc(a.label)} se estima con este mismo cierre.`}</div>
         </div>
         <div class="grid" style="gap:14px">
           <div class="grid g-kpi">
-            ${kpiCard('Meta ' + esc(a.label), short(mf.meta), `Cuotas ${short(mf.metaCuotas)} · Recup. ${short(mf.metaRecup)}`, '#818cf8')}
+            ${kpiCard('Meta ' + esc(a.label), short(mf.meta), `Letras ${short(mf.metaCuotas)}${mf.metaRecup ? ' · Recup. ' + short(mf.metaRecup) : ''}`, '#818cf8')}
             ${kpiCard('Cobrado', short(real), `${int(a.kpi.recibos)} recibos · ${int(a.kpi.clientesPagaron)} clientes`, '#34d399')}
             ${kpiCard('Cumplimiento', pct(cumpl, 0), real >= mf.meta ? '<span class="chip up">Meta cumplida</span>' : `<span class="chip down">Faltaron ${short(mf.meta - real)}</span>`, cumpl >= 1 ? '#34d399' : '#f87171')}
             ${kpiCard('Meta ' + esc(C.monthLabel(C.nextMonth(a.month))), short(next.meta), 'con este cierre y tus supuestos', '#38bdf8')}
@@ -452,11 +452,14 @@
         <div class="card"><h3>Meta vs cobrado por oficial</h3><div id="cMetaO" class="chart">${md ? '' : ''}</div></div>
       </div>
       <div class="card mt"><h3>Detalle por tramo</h3><div id="metaTbl"></div></div>
+      <div class="card mt"><h3>Letras del mes por cliente <small>la letra que le corresponde a cada cliente</small></h3>
+        ${md ? `<div class="tools"><div class="seg" id="letSeg"><button data-m="mes" class="${S.letMes !== 'sig' ? 'on' : ''}">${esc(C.monthLabel(md.month))} (vs cobrado)</button><button data-m="sig" class="${S.letMes === 'sig' ? 'on' : ''}">${esc(C.monthLabel(C.nextMonth(md.month)))} (por cobrar)</button></div><button class="btn sm" id="letXls">Excel de letras ${esc(C.monthLabel(S.letMes === 'sig' ? C.nextMonth(md.month) : md.month))}</button></div>` : ''}
+        <div id="letTbl">${md ? '' : needDetail('El listado de letras por cliente se arma con los reportes del mes.')}</div></div>
       <div class="card mt"><h3>Lista de cobro <small>quién debía pagar y cuánto falta</small></h3><div id="cobroTbl">${md ? '' : needDetail('La lista de cobro por cliente usa los reportes del mes.')}</div></div>`;
     enableTilt(v);
     $('#metaXls').onclick = downloadMeta;
     const upd = () => { saveConfig(); renderStamp++; Object.keys(rendered).forEach(k => rendered[k] = null); rendered.meta = S.current + '|' + renderStamp; renderMeta(); };
-    $('#sThr').oninput = e => { cfg.cuotaHastaDias = thr[+e.target.value]; $('#oThr').textContent = cfg.cuotaHastaDias + ' días'; };
+    $('#sThr').oninput = e => { cfg.cuotaHastaDias = thr[+e.target.value]; $('#oThr').textContent = thrLb(cfg.cuotaHastaDias); };
     $('#sThr').onchange = upd;
     $('#sEf').oninput = e => { cfg.efectividadCuotas = +e.target.value; $('#oEf').textContent = cfg.efectividadCuotas + '%'; };
     $('#sEf').onchange = upd;
@@ -470,13 +473,29 @@
     const mr = mf.rows;
     const realB = (a.metaRows || []).map(r => r.real || 0);
     chart('cMetaB', { tooltip: tip({ valueFormatter: v => money0(v) }), legend: { top: 0, textStyle: { color: '#9fb0d8' } }, grid: { left: 60, right: 14, top: 36, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: C.BUCKETS }, axisStyle), yAxis: { type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine },
-      series: [{ name: 'Meta cuotas', type: 'bar', stack: 'm', data: mr.map(r => r.metaCuotas), itemStyle: { color: '#6366f1' }, barWidth: 22 }, { name: 'Meta recuperación', type: 'bar', stack: 'm', data: mr.map(r => r.metaRecup), itemStyle: { color: '#a78bfa', borderRadius: [6, 6, 0, 0] } }, { name: 'Cobrado', type: 'bar', data: realB, itemStyle: { color: grad('#34d399', '#065f46'), borderRadius: [6, 6, 0, 0] }, barWidth: 22 }] });
+      series: [{ name: 'Meta letras', type: 'bar', stack: 'm', data: mr.map(r => r.metaCuotas), itemStyle: { color: '#6366f1' }, barWidth: 22 }, { name: 'Meta recuperación', type: 'bar', stack: 'm', data: mr.map(r => r.metaRecup), itemStyle: { color: '#a78bfa', borderRadius: [6, 6, 0, 0] } }, { name: 'Cobrado', type: 'bar', data: realB, itemStyle: { color: grad('#34d399', '#065f46'), borderRadius: [6, 6, 0, 0] }, barWidth: 22 }] });
     if (md) {
-      const per = C.computeMeta(md.loans, cfg).perLoan;
+      const per = C.computeMeta(md.loans, cfg, 'mes').perLoan;
       const om = new Map(); md.loans.forEach(l => { const g = om.get(l.oficial) || { k: l.oficial, meta: 0, real: 0 }; g.meta += per.get(l.id) || 0; g.real += l.pagadoMes; om.set(l.oficial, g); });
       const ofs = [...om.values()].sort((x, y) => y.meta - x.meta);
       chart('cMetaO', { tooltip: tip({ valueFormatter: v => money0(v) }), legend: { top: 0, textStyle: { color: '#9fb0d8' } }, grid: { left: 60, right: 14, top: 36, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: ofs.map(o => o.k) }, axisStyle), yAxis: { type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine },
         series: [{ name: 'Meta', type: 'bar', data: ofs.map(o => Math.round(o.meta)), itemStyle: { color: grad('#818cf8', '#312e81'), borderRadius: [6, 6, 0, 0] }, barWidth: 24 }, { name: 'Cobrado', type: 'bar', data: ofs.map(o => Math.round(o.real)), itemStyle: { color: grad('#34d399', '#065f46'), borderRadius: [6, 6, 0, 0] }, barWidth: 24, label: { show: true, position: 'top', color: '#e8eeff', fontSize: 10.5, formatter: p => { const o = ofs[p.dataIndex]; return o.meta ? pct(o.real / o.meta, 0) : ''; } } }] });
+      const sig = S.letMes === 'sig';
+      const sucs = [...new Set(md.loans.map(l => String(l.sucursal).replace(/^\d+\s+/, '')))].sort();
+      const letRows = md.loans.map(l => ({ l, lt: sig ? (l.letrasSig || 0) : (l.letrasMes || 0), suc: String(l.sucursal).replace(/^\d+\s+/, '') }));
+      const letCols = [
+        { h: 'Contrato', v: x => x.l.id }, { h: 'Cliente', v: x => x.l.nombre }, { h: 'Sucursal', v: x => x.suc },
+        { h: 'Letra', v: x => x.l.letra, n: 1, f: money }, { h: 'Forma pago', v: x => C.freqName(x.l.freq) },
+        { h: sig ? 'Vencen en el mes' : 'Vencieron en el mes', v: x => x.lt, n: 1, f: money, sum: 1 }];
+      if (!sig) letCols.push({ h: 'Cobrado', v: x => x.l.pagadoMes, n: 1, f: money, sum: 1 }, { h: 'Falta', v: x => Math.max(0, x.lt - x.l.pagadoMes), n: 1, f: money, sum: 1 }, { h: 'Estado', v: x => x.lt <= 0 ? (x.l.pagadoMes > 0 ? 'Abonó' : '—') : x.l.pagadoMes <= 0 ? 'No pagó' : x.l.pagadoMes + 0.01 < x.lt ? 'Parcial' : 'Pagó', f: s => `<span class="badge ${s === 'Pagó' || s === 'Abonó' ? 'b0' : s === 'Parcial' ? 'b2' : s === 'No pagó' ? 'b4' : ''}">${s}</span>` });
+      letCols.push({ h: 'Días mora', v: x => x.l.dias, n: 1, f: int }, { h: 'Saldo', v: x => x.l.saldo, n: 1, f: money, sum: 1 }, { h: 'Saldo al día', v: x => x.l.corriente, n: 1, f: money, sum: 1 }, { h: 'Mora', v: x => x.l.totalMoroso, n: 1, f: money, sum: 1 },
+        { h: 'Primera letra', v: x => x.l.fini || '', f: dd }, { h: 'Última letra', v: x => x.l.fvenc || '', f: dd }, { h: 'Cédula', v: x => x.l.cedula });
+      const letOpts = `<select class="sel" id="fSuc"><option value="">Todas las sucursales</option>${sucs.map(s => `<option>${esc(s)}</option>`).join('')}</select><select class="sel" id="fLet"><option value="con">Con letra en el mes</option><option value="">Todos los préstamos</option>${sig ? '' : '<option value="no">No pagaron</option>'}</select>`;
+      const lt = table($('#letTbl'), letCols, letRows, { sort: 5, total: true, toolsHtml: letOpts });
+      const applyLet = () => { const s = $('#fSuc').value, f = $('#fLet').value; lt.setFilter(x => (!s || x.suc === s) && (f === '' || (f === 'con' ? x.lt > 0 : x.lt > 0 && x.l.pagadoMes <= 0))); };
+      $('#fSuc').onchange = applyLet; $('#fLet').onchange = applyLet; applyLet();
+      $$('#letSeg button').forEach(b => b.onclick = () => { S.letMes = b.dataset.m; renderStamp++; rendered.meta = null; renderMeta(); rendered.meta = S.current + '|' + renderStamp; setTimeout(() => { const el = $('#letTbl'); el && el.scrollIntoView({ block: 'start' }); }, 50); });
+      $('#letXls').onclick = () => downloadLetras(sig ? C.nextMonth(md.month) : md.month);
       const rows = md.loans.map(l => ({ l, meta: per.get(l.id) || 0 })).filter(x => x.meta > 0.005 || x.l.pagadoMes > 0);
       const opts = '<select class="sel" id="fPago"><option value="">Todos</option><option value="no">No pagaron en el mes</option><option value="parcial">Pagaron menos de la meta</option><option value="ok">Cumplieron</option></select>';
       const tb = table($('#cobroTbl'), [
@@ -493,7 +512,7 @@
     const mrRows = fuera > 0.5 ? mr.concat([{ k: 'Fuera de la cartera activa', n: 0, moroso: 0, metaCuotas: 0, metaRecup: 0, meta: 0, _real: fuera }]) : mr;
     table($('#metaTbl'), [
       { h: 'Tramo', v: r => r.k, f: (k) => C.BUCKETS.indexOf(k) < 0 ? `<span class="muted">${k}</span>` : `<span class="badge b${C.BUCKETS.indexOf(k)}">${k}</span>` }, { h: '# Préstamos', v: r => r.n, n: 1, sum: 1, f: int },
-      { h: 'Saldo moroso', v: r => r.moroso, n: 1, f: money, sum: 1 }, { h: 'Meta cuotas', v: r => r.metaCuotas, n: 1, f: money, sum: 1 }, { h: 'Meta recuperación', v: r => r.metaRecup, n: 1, f: money, sum: 1 },
+      { h: 'Saldo moroso', v: r => r.moroso, n: 1, f: money, sum: 1 }, { h: 'Meta letras', v: r => r.metaCuotas, n: 1, f: money, sum: 1 }, { h: 'Meta recuperación', v: r => r.metaRecup, n: 1, f: money, sum: 1 },
       { h: 'Meta total', v: r => r.meta, n: 1, f: money, sum: 1 }, { h: 'Cobrado ' + a.label, v: r => r._real != null ? r._real : ((a.metaRows[C.BUCKETS.indexOf(r.k)] || {}).real || 0), n: 1, f: money, sum: 1 }
     ], mrRows, { search: false, sort: -1, total: true, pageSize: 10 });
     if (fuera > 0.5) $('#metaTbl').insertAdjacentHTML('beforeend', `<div class="note">La fila "Fuera de la cartera activa" son pagos de préstamos que ya no están en el cierre (cancelados en el mes). Cuentan en el cobrado total, pero no tienen meta.</div>`);
@@ -602,6 +621,12 @@
       await saveFile(`GSF - Cartera Cierre ${fileMonth(md.month)}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     } catch (e) { loader(false); console.error(e); toast('Error al generar el Excel: ' + e.message); }
   }
+  async function downloadLetras(ym) {
+    const md = model(); if (!md) return;
+    loader(true, 'Armando el Excel de letras…', 30);
+    try { await loadScript('exceljs'); const wb = await Exporters.letrasWorkbook(md, ym); const buf = await wb.xlsx.writeBuffer(); loader(false); await saveFile(`Letras de la cartera ${C.monthLabel(ym)}.xlsx`, new Blob([buf])); }
+    catch (e) { loader(false); console.error(e); toast('Error: ' + e.message); }
+  }
   async function downloadMeta() {
     const md = model(); const a = agg(); if (!a) return;
     loader(true, 'Armando el Excel de meta de cobros…', 30);
@@ -627,8 +652,8 @@
   // ---------- PRESENTACIÓN ----------
   let slideIx = 0;
   function slidesData() {
-    const a = agg(), p = prevAgg(), k = a.kpi, mf = C.metaFromAgg(p || a, S.config.meta);
-    return { a, p, k, mf, cumpl: mf.meta ? k.recaudo / mf.meta : 0, ins: insights(a, p), rec: recomendaciones(a), next: C.metaFromAgg(a, S.config.meta) };
+    const a = agg(), p = prevAgg(), k = a.kpi, mf = C.metaFromAgg(p || a, S.config.meta, p ? 'sig' : 'mes');
+    return { a, p, k, mf, cumpl: mf.meta ? k.recaudo / mf.meta : 0, ins: insights(a, p), rec: recomendaciones(a), next: C.metaFromAgg(a, S.config.meta, 'sig') };
   }
   function renderPres() {
     const v = $('#v-presentacion'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
@@ -674,13 +699,13 @@
   }
   function metaRowsByOficial() {
     const md = model(); if (!md) return [];
-    const per = C.computeMeta(md.loans, S.config.meta).perLoan; const m = new Map();
+    const per = C.computeMeta(md.loans, S.config.meta, 'mes').perLoan; const m = new Map();
     md.loans.forEach(l => { const g = m.get(l.oficial) || { k: l.oficial, n: 0, meta: 0, real: 0, no: 0 }; const mt = per.get(l.id) || 0; g.n++; g.meta += mt; g.real += l.pagadoMes; if (mt > 0.005 && l.pagadoMes <= 0) g.no++; m.set(l.oficial, g); });
     return [...m.values()].sort((x, y) => y.meta - x.meta);
   }
   function gestionRows(n) {
     const md = model(); if (!md) return [];
-    const per = C.computeMeta(md.loans, S.config.meta).perLoan;
+    const per = C.computeMeta(md.loans, S.config.meta, 'mes').perLoan;
     return md.loans.map(l => ({ l, meta: per.get(l.id) || 0 })).map(x => Object.assign(x, { falta: Math.max(0, x.meta - x.l.pagadoMes) })).filter(x => x.falta > 0.5).sort((x, y) => (y.l.bucket > 0 && y.l.bucket < 4 ? 1 : 0) - (x.l.bucket > 0 && x.l.bucket < 4 ? 1 : 0) || y.falta - x.falta).slice(0, n || 10);
   }
   const slideTable = (heads, rows, right) => `<table style="width:100%;border-collapse:collapse;font-size:clamp(7px,1.15vw,14px)"><thead><tr style="background:#0f2a52;color:#fff">${heads.map((h, i) => `<th style="padding:.5em .7em;text-align:${right.includes(i) ? 'right' : 'left'}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map((r, j) => `<tr style="background:${j % 2 ? '#f1f5fb' : '#fff'}">${r.map((c, i) => `<td style="padding:.4em .7em;text-align:${right.includes(i) ? 'right' : 'left'}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;

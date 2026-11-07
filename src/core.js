@@ -34,9 +34,9 @@
 
   const DEFAULT_CONFIG = {
     meta: {
-      cuotaHastaDias: 90,          // se cuentan las cuotas del mes de préstamos con mora hasta X días
-      efectividadCuotas: 100,      // % de esas cuotas que se espera cobrar
-      recupera: [0, 30, 20, 10, 5, 0.25] // % del saldo moroso que se espera recuperar por tramo
+      cuotaHastaDias: 1e9,         // letras del mes de préstamos con mora hasta X días (1e9 = todos, como el reporte de letras)
+      efectividadCuotas: 100,      // % de esas letras que se espera cobrar
+      recupera: [0, 0, 0, 0, 0, 0] // % del saldo moroso que se espera recuperar por tramo (adicional a las letras)
     },
     patronoMap: {},
     excluirMigradosEnIndice: false
@@ -68,6 +68,18 @@
   const monthLabel = ym => { if (!ym) return '—'; const [y, m] = ym.split('-'); return `${MESES[+m - 1]} ${y}`; };
   const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
   const nextMonth = ym => { let [y, m] = ym.split('-').map(Number); m++; if (m > 12) { m = 1; y++; } return `${y}-${String(m).padStart(2, '0')}`; };
+
+  // Letras que vencen en un mes: quincenal = día 15 y fin de mes; mensual = el día de la fecha final.
+  // Solo cuentan las fechas entre la primera y la última letra del préstamo.
+  function letrasEnMes(l, ym) {
+    if (!l.letra || !l.fvenc || !ym) return 0;
+    const [y, m] = ym.split('-').map(Number); const E = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const f = String(l.freq || '').toUpperCase();
+    const days = f === 'Q' ? [15, E] : f === 'M' ? [Math.min(+l.fvenc.slice(8, 10) || E, E)] : f === 'S' ? [7, 14, 21, 28].filter(d => d <= E) : [E];
+    const ini = l.fini || l.fprest; let n = 0;
+    for (const d of days) { const s = `${ym}-${String(d).padStart(2, '0')}`; if ((!ini || s >= ini) && s <= l.fvenc) n++; }
+    return Math.round(n * l.letra * 100) / 100;
+  }
 
   // ---------- lectura ----------
   function bufToAOA(buf, filename) {
@@ -278,6 +290,11 @@
         migrado: /MIGRAD/i.test(pr.producto || es.producto || '')
       };
     });
+    const nx = month ? nextMonth(month) : null;
+    loans.forEach(l => {
+      l.letrasMes = Math.min(letrasEnMes(l, month), Math.max(0, l.saldo));
+      l.letrasSig = Math.round(Math.min(letrasEnMes(l, nx), Math.max(0, l.corriente)) * 100) / 100;
+    });
     return { month, baseFrom, loans, R, reportsLoaded: reports.filter(r => r.key).map(r => r.key) };
   }
 
@@ -294,17 +311,22 @@
     return [...m.values()].map(g => { for (const k in g) if (typeof g[k] === 'number' && k !== 'n' && k !== 'enMora') g[k] = r2(g[k]); return g; }).sort((a, b) => b.saldo - a.saldo);
   }
 
-  function computeMeta(loans, cfg) {
+  // mode 'mes' = letras del mes del cierre (para medir lo cobrado ese mes); 'sig' = letras del mes siguiente (meta a fijar)
+  function computeMeta(loans, cfg, mode) {
     const c = Object.assign({}, DEFAULT_CONFIG.meta, cfg || {});
-    const rows = BUCKETS.map((b, i) => ({ k: b, n: 0, saldo: 0, moroso: 0, cuotas: 0, cuotasAll: 0, metaCuotas: 0, metaRecup: 0, real: 0 }));
+    const sig = mode === 'sig';
+    const rows = BUCKETS.map((b, i) => ({ k: b, n: 0, saldo: 0, moroso: 0, cuotas: 0, cuotasAll: 0, cuotasMes: 0, metaCuotas: 0, metaRecup: 0, real: 0 }));
     let metaTotal = 0;
     const perLoan = new Map();
     for (const l of loans) {
       const row = rows[l.bucket];
       row.n++; row.saldo += l.saldo; row.moroso += l.totalMoroso; row.real += l.pagadoMes;
-      const mc = (l.dias <= c.cuotaHastaDias && l.saldo > 0) ? Math.min(l.cuotaMes, l.saldo) * c.efectividadCuotas / 100 : 0;
+      const lt = sig ? (l.letrasSig != null ? l.letrasSig : Math.min(l.cuotaMes, l.saldo)) : (l.letrasMes != null ? l.letrasMes : Math.min(l.cuotaMes, l.saldo));
+      const mc = (l.dias <= c.cuotaHastaDias && l.saldo > 0) ? lt * c.efectividadCuotas / 100 : 0;
       const mr = l.totalMoroso * (c.recupera[l.bucket] || 0) / 100;
-      row.cuotas += (l.dias <= c.cuotaHastaDias) ? l.cuotaMes : 0; row.cuotasAll += l.saldo > 0 ? Math.min(l.cuotaMes, l.saldo) : 0; row.metaCuotas += mc; row.metaRecup += mr;
+      row.cuotas += (l.dias <= c.cuotaHastaDias) ? lt : 0;
+      row.cuotasAll += l.letrasSig != null ? l.letrasSig : (l.saldo > 0 ? Math.min(l.cuotaMes, l.saldo) : 0);
+      row.cuotasMes += l.letrasMes != null ? l.letrasMes : (l.saldo > 0 ? Math.min(l.cuotaMes, l.saldo) : 0); row.metaCuotas += mc; row.metaRecup += mr;
       perLoan.set(l.id, mc + mr); metaTotal += mc + mr;
     }
     rows.forEach(r => { for (const k in r) if (typeof r[k] === 'number' && k !== 'n') r[k] = r2(r[k]); r.meta = r2(r.metaCuotas + r.metaRecup); });
@@ -313,11 +335,12 @@
   }
 
   const BUCKET_TOP = [30, 60, 90, 120, 365, 1e9];
-  function metaFromAgg(agg, cfg) {
+  function metaFromAgg(agg, cfg, mode) {
     const c = Object.assign({}, DEFAULT_CONFIG.meta, cfg || {});
     const rows = (agg.metaRows || []).map((r, i) => {
       const inc = BUCKET_TOP[i] <= c.cuotaHastaDias;
-      const mc = inc ? (r.cuotasAll != null ? r.cuotasAll : r.cuotas) * c.efectividadCuotas / 100 : 0;
+      const base = mode === 'mes' ? (r.cuotasMes != null ? r.cuotasMes : r.cuotasAll) : r.cuotasAll;
+      const mc = inc ? (base != null ? base : r.cuotas) * c.efectividadCuotas / 100 : 0;
       const mr = (r.moroso || 0) * (c.recupera[i] || 0) / 100;
       return Object.assign({}, r, { metaCuotas: r2(mc), metaRecup: r2(mr), meta: r2(mc + mr) });
     });
@@ -338,7 +361,7 @@
     const pagos = R.pagos || [];
     const segv = R.segvida || [];
     const segAseg = {}; segv.forEach(s => { const k = s.aseguradora || '—'; segAseg[k] = r2((segAseg[k] || 0) + s.prima); });
-    const meta = computeMeta(L, config.meta);
+    const meta = computeMeta(L, config.meta, 'sig');
     const kpi = {
       cartera, prestamos: L.length, clientes: new Set(L.map(l => l.cedula || l.nombre)).size, montoOriginal: sum(L, l => l.monto),
       corriente: sum(L, l => l.corriente), moroso, enMora: L.filter(l => l.bucket > 0).length,
@@ -358,7 +381,7 @@
       vencidosRepN: (R.vencidos || []).length, vencidosRepSaldo: sum(R.vencidos, x => x.saldo),
       valorPresente: sum(L, l => l.valorPresente),
       rubCapital: sum(L, l => l.rub.capital || 0), rubInteres: sum(L, l => l.rub.interes || 0), rubManejo: sum(L, l => l.rub.manejo || 0), rubFeci: sum(L, l => l.rub.feci || 0), rubSegVida: sum(L, l => l.rub.segVida || 0),
-      meta: meta.meta, metaCuotas: meta.metaCuotas, metaRecup: meta.metaRecup, cuotasProgramadas: sum(L, l => l.cuotaMes)
+      meta: meta.meta, metaCuotas: meta.metaCuotas, metaRecup: meta.metaRecup, cuotasProgramadas: sum(L, l => l.cuotaMes), letrasMes: sum(L, l => l.letrasMes || 0), letrasSig: sum(L, l => l.letrasSig || 0)
     };
     const agingTot = AGING.map((a, i) => r2(L.reduce((s, l) => s + (l.aging ? l.aging[i] : 0), 0)));
     const byBucket = BUCKETS.map((b, i) => { const g = L.filter(l => l.bucket === i); return { k: b, n: g.length, saldo: sum(g, l => l.saldo), moroso: sum(g, l => l.totalMoroso), pagado: sum(g, l => l.pagadoMes) }; });
@@ -472,6 +495,6 @@
     });
   }
 
-  const api = { topClients, deepAnalysis, metaFromAgg, BUCKET_TOP, REPORTS, BY_KEY, BUCKETS, AGING, MESES, DEFAULT_CONFIG, GSF_HEAD, GSF_TYPES, readReport, bufToAOA, identify, reportMeta, batchMonth, buildModel, aggregate, computeMeta, rollMatrix, gsfRows, monthLabel, lastDay, nextMonth, freqName, bucketOf, validDate, r2 };
+  const api = { letrasEnMes, topClients, deepAnalysis, metaFromAgg, BUCKET_TOP, REPORTS, BY_KEY, BUCKETS, AGING, MESES, DEFAULT_CONFIG, GSF_HEAD, GSF_TYPES, readReport, bufToAOA, identify, reportMeta, batchMonth, buildModel, aggregate, computeMeta, rollMatrix, gsfRows, monthLabel, lastDay, nextMonth, freqName, bucketOf, validDate, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);
