@@ -1547,7 +1547,8 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
       </div>
       <div class="card mt"><h3>Detalle por tramo</h3><div id="metaTbl"></div></div>
       <div class="card mt"><h3>Letras del mes por cliente <small>la letra que le corresponde a cada cliente</small></h3>
-        ${md ? `<div class="tools"><div class="seg" id="letSeg"><button data-m="mes" class="${S.letMes !== 'sig' ? 'on' : ''}">${esc(C.monthLabel(md.month))} (vs cobrado)</button><button data-m="sig" class="${S.letMes === 'sig' ? 'on' : ''}">${esc(C.monthLabel(C.nextMonth(md.month)))} (por cobrar)</button></div><button class="btn sm" id="letXls">Excel de letras ${esc(C.monthLabel(S.letMes === 'sig' ? C.nextMonth(md.month) : md.month))}</button></div>` : ''}
+        ${md ? `<div class="tools"><div class="seg" id="letSeg"><button data-m="mes" class="${S.letMes !== 'sig' ? 'on' : ''}">${esc(C.monthLabel(md.month))} (vs cobrado)</button><button data-m="sig" class="${S.letMes === 'sig' ? 'on' : ''}">${esc(C.monthLabel(C.nextMonth(md.month)))} (por cobrar)</button></div><button class="btn sm pri" id="letXls">Excel de letras ${esc(C.monthLabel(S.letMes === 'sig' ? C.nextMonth(md.month) : md.month))}</button><button class="btn sm pri" id="letPpt">PowerPoint de letras</button></div>
+        <div class="note" style="margin:-2px 0 10px">${S.letMes === 'sig' ? 'Letras que vencen en el mes siguiente, según la letra y la forma de pago de cada préstamo.' : 'Cómo se calcula el estado: <b>Vencieron en el mes</b> = la letra × las fechas de pago que caen en el mes (quincenal: 15 y fin de mes; mensual: una). <b>Cobrado</b> = todo lo que pagó ese contrato en el mes según el Informe Recaudado. <b>Pagó</b> si lo cobrado alcanza las letras del mes, <b>Parcial</b> si pagó algo pero menos, <b>No pagó</b> si no aparece ningún pago en el mes.'}</div>` : ''}
         <div id="letTbl">${md ? '' : needDetail('El listado de letras por cliente se arma con los reportes del mes.')}</div></div>
       <div class="card mt"><h3>Lista de cobro <small>quién debía pagar y cuánto falta</small></h3><div id="cobroTbl">${md ? '' : needDetail('La lista de cobro por cliente usa los reportes del mes.')}</div></div>`;
     enableTilt(v);
@@ -1590,6 +1591,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
       $('#fSuc').onchange = applyLet; $('#fLet').onchange = applyLet; applyLet();
       $$('#letSeg button').forEach(b => b.onclick = () => { S.letMes = b.dataset.m; renderStamp++; rendered.meta = null; renderMeta(); rendered.meta = S.current + '|' + renderStamp; setTimeout(() => { const el = $('#letTbl'); el && el.scrollIntoView({ block: 'start' }); }, 50); });
       $('#letXls').onclick = () => downloadLetras(sig ? C.nextMonth(md.month) : md.month);
+      $('#letPpt').onclick = () => downloadLetrasPPT(sig ? 'sig' : 'mes');
       const rows = md.loans.map(l => ({ l, meta: per.get(l.id) || 0 })).filter(x => x.meta > 0.005 || x.l.pagadoMes > 0);
       const opts = '<select class="sel" id="fPago"><option value="">Todos</option><option value="no">No pagaron en el mes</option><option value="parcial">Pagaron menos de la meta</option><option value="ok">Cumplieron</option></select>';
       const tb = table($('#cobroTbl'), [
@@ -1753,6 +1755,55 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     try { await loadScript('exceljs'); const wb = await Exporters.letrasWorkbook(md, ym); const buf = await wb.xlsx.writeBuffer(); loader(false); await saveFile(`Letras de la cartera ${C.monthLabel(ym)}.xlsx`, new Blob([buf])); }
     catch (e) { loader(false); console.error(e); toast('Error: ' + e.message); }
   }
+  function letrasEstado(md, mode) {
+    const sig = mode === 'sig';
+    const rows = md.loans.map(l => { const lt = sig ? (l.letrasSig || 0) : (l.letrasMes || 0); const falta = Math.max(0, lt - l.pagadoMes); const est = sig ? 'Por cobrar' : lt <= 0 ? (l.pagadoMes > 0 ? 'Abonó' : '—') : l.pagadoMes <= 0 ? 'No pagó' : l.pagadoMes + 0.01 < lt ? 'Parcial' : 'Pagó'; return { l, lt, falta, est, suc: String(l.sucursal).replace(/^\d+\s+/, '') }; }).filter(x => x.lt > 0);
+    const by = (f) => { const m = new Map(); rows.forEach(x => { const k = f(x); const g = m.get(k) || { k, n: 0, lt: 0, cob: 0, falta: 0 }; g.n++; g.lt += x.lt; g.cob += Math.min(x.l.pagadoMes, x.lt); g.falta += x.falta; m.set(k, g); }); return [...m.values()]; };
+    return { rows, porEstado: ['Pagó', 'Parcial', 'No pagó'].map(e => by(x => x.est).find(g => g.k === e) || { k: e, n: 0, lt: 0, cob: 0, falta: 0 }), porSuc: by(x => x.suc).sort((p, q) => q.lt - p.lt), total: rows.reduce((s, x) => s + x.lt, 0), cobrado: rows.reduce((s, x) => s + Math.min(x.l.pagadoMes, x.lt), 0) };
+  }
+  function addLetrasSlides(pptx, md, mode, title, NAVY, BLUE) {
+    const sig = mode === 'sig'; const ym = sig ? C.nextMonth(md.month) : md.month; const E = letrasEstado(md, mode);
+    const HD = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
+    let s = pptx.addSlide({ masterName: 'M' }); title(s, sig ? `Letras por cobrar · ${C.monthLabel(ym)}` : `Letras del mes · ${C.monthLabel(ym)}`, sig ? 'según la cartera al cierre' : 'vencieron vs cobrado');
+    if (sig) {
+      s.addText(money0(E.total), { x: 0.6, y: 1.4, w: 5, h: 1, fontSize: 44, bold: true, color: BLUE });
+      s.addText(`en letras de ${E.rows.length} préstamos vencen en ${C.monthLabel(ym)}`, { x: 0.6, y: 2.4, w: 5.5, h: 0.6, fontSize: 15, color: '334155' });
+    } else {
+      s.addText(pct(E.total ? E.cobrado / E.total : 0, 0), { x: 0.6, y: 1.3, w: 4, h: 1.1, fontSize: 54, bold: true, color: E.cobrado >= E.total ? '16A34A' : 'D97706' });
+      s.addText(`de las letras del mes cobradas\n${money0(E.cobrado)} de ${money0(E.total)}`, { x: 0.6, y: 2.4, w: 5.2, h: 0.9, fontSize: 15, color: '334155' });
+      s.addChart(pptx.ChartType.doughnut, [{ name: 'Préstamos', labels: E.porEstado.map(g => g.k), values: E.porEstado.map(g => g.n) }], { x: 0.4, y: 3.4, w: 5.4, h: 3.3, holeSize: 55, chartColors: ['16A34A', 'F59E0B', 'DC2626'], showLegend: true, legendPos: 'r', showValue: true, showPercent: false, dataLabelColor: 'FFFFFF', legendFontSize: 13 });
+    }
+    s.addTable([[HD('Sucursal'), HD('Préstamos'), HD(sig ? 'Vencen' : 'Vencieron'), ...(sig ? [] : [HD('Cobrado'), HD('Falta'), HD('%')])], ...E.porSuc.map(g => [g.k, String(g.n), money0(g.lt), ...(sig ? [] : [money0(g.cob), money0(g.falta), pct(g.lt ? g.cob / g.lt : 0, 0)])]), [{ text: 'Total', options: { bold: true } }, { text: String(E.rows.length), options: { bold: true } }, { text: money0(E.total), options: { bold: true } }, ...(sig ? [] : [{ text: money0(E.cobrado), options: { bold: true } }, { text: money0(E.total - E.cobrado), options: { bold: true } }, { text: pct(E.total ? E.cobrado / E.total : 0, 0), options: { bold: true } }])]], { x: 6.2, y: 1.3, w: 6.7, fontSize: 12, rowH: 0.38, border: { type: 'solid', color: 'E2E8F0', pt: 1 } });
+    if (!sig) s.addTable([[HD('Estado'), HD('Préstamos'), HD('Letras'), HD('Falta')], ...E.porEstado.map(g => [{ text: g.k, options: { bold: true, color: g.k === 'Pagó' ? '16A34A' : g.k === 'Parcial' ? 'D97706' : 'DC2626' } }, String(g.n), money0(g.lt), money0(g.falta)])], { x: 6.2, y: 5.0, w: 6.7, fontSize: 12, rowH: 0.36, border: { type: 'solid', color: 'E2E8F0', pt: 1 } });
+    const list = E.rows.slice().sort((p, q) => sig ? q.lt - p.lt : q.falta - p.falta || q.lt - p.lt).filter(x => sig || x.falta > 0.005);
+    const per = 14;
+    for (let i = 0; i < list.length; i += per) {
+      const part = list.slice(i, i + per);
+      s = pptx.addSlide({ masterName: 'M' }); title(s, sig ? `Letras por cobrar · ${C.monthLabel(ym)}` : `Clientes que no completaron su letra · ${C.monthLabel(ym)}`, `${i + 1}–${i + part.length} de ${list.length}`);
+      s.addTable([[HD('Contrato'), HD('Cliente'), HD('Sucursal'), HD('Letra'), HD('Forma'), HD(sig ? 'Vencen' : 'Vencieron'), ...(sig ? [HD('Días mora')] : [HD('Cobrado'), HD('Falta'), HD('Estado')])],
+        ...part.map(x => [x.l.id, x.l.nombre, x.suc, money0(x.l.letra), C.freqName(x.l.freq), money0(x.lt), ...(sig ? [String(x.l.dias)] : [money0(x.l.pagadoMes), { text: money0(x.falta), options: { bold: true } }, { text: x.est, options: { bold: true, color: x.est === 'Parcial' ? 'D97706' : 'DC2626' } }])])],
+        { x: 0.4, y: 1.15, w: 12.5, fontSize: 11, rowH: 0.36, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: sig ? [2.0, 4.0, 1.7, 1.1, 1.1, 1.3, 1.3] : [1.9, 3.5, 1.5, 1.0, 1.0, 1.1, 1.0, 1.0, 1.0] });
+    }
+  }
+  function pptBase(titleText, a) {
+    const pptx = new PptxGenJS(); pptx.layout = 'LAYOUT_WIDE'; pptx.title = titleText;
+    const NAVY = '0F2A52', BLUE = '1D4ED8', GREY = '64748B';
+    pptx.defineSlideMaster({ title: 'M', background: { color: 'FFFFFF' }, objects: [{ rect: { x: 0, y: 0, w: 13.33, h: 0.9, fill: { color: NAVY } } }, { text: { text: `Grupo de Servicios Financieros · Cierre ${a.label}`, options: { x: 0.5, y: 7.05, w: 8, h: 0.3, fontSize: 10, color: GREY } } }], slideNumber: { x: 12.4, y: 7.05, fontSize: 10, color: GREY } });
+    const title = (s, t, sub) => { s.addText(t, { x: 0.5, y: 0.12, w: 9, h: 0.66, fontSize: 22, bold: true, color: 'FFFFFF', fontFace: 'Calibri' }); if (sub) s.addText(sub, { x: 8.8, y: 0.12, w: 4, h: 0.66, fontSize: 12, color: 'C7D2FE', align: 'right' }); };
+    return { pptx, NAVY, BLUE, title };
+  }
+  async function downloadLetrasPPT(mode) {
+    const md = model(); const a = agg(); if (!md) return;
+    loader(true, 'Armando la presentación de letras…', 30);
+    try {
+      await loadScript('pptx');
+      const ym = mode === 'sig' ? C.nextMonth(md.month) : md.month;
+      const { pptx, NAVY, BLUE, title } = pptBase('Letras de la cartera ' + C.monthLabel(ym), a);
+      addLetrasSlides(pptx, md, mode, title, NAVY, BLUE);
+      const blob = await pptx.write({ outputType: 'blob' }); loader(false);
+      await saveFile(`Letras de la cartera ${C.monthLabel(ym)}.pptx`, blob);
+    } catch (e) { loader(false); console.error(e); toast('Error: ' + e.message); }
+  }
   async function downloadMeta() {
     const md = model(); const a = agg(); if (!a) return;
     loader(true, 'Armando el Excel de meta de cobros…', 30);
@@ -1799,6 +1850,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       `<div class="slide"><div class="band">Concentración: mayores clientes<small>${a.deep ? pct(a.deep.top25Pct) + ' de la cartera en 25 clientes' : ''}</small></div><div class="body">${model() ? topSlideHtml(C.topClients(model(), 10)) : '<div id="sP7" class="schart"></div>'}</div>${foot('')}</div>`,
       ...(a.deep ? [`<div class="slide"><div class="band">Cosechas y antigüedad de pago<small>saldo y PAR30 por año de desembolso</small></div><div class="body" style="display:grid;grid-template-columns:1.3fr 1fr;gap:3%"><div id="sP8" class="schart"></div><div id="sP9" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Vencimientos y tasas<small>tasa promedio ${a.deep.tasaProm.toFixed(2)}% · plazo ${Math.round(a.deep.plazoProm)} meses</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP11a" class="schart"></div><div id="sP11b" class="schart"></div></div>${foot('')}</div>`] : []),
+      ...(model() ? [`<div class="slide"><div class="band">Letras del mes<small>vencieron vs cobrado · ${esc(a.label)}</small></div><div class="body">${letrasSlideHtml()}</div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">Meta de cobros por oficial<small>${esc(a.label)}</small></div><div class="body">${metaOfiSlideHtml(D)}</div>${foot('')}</div>`,
         `<div class="slide"><div class="band">Clientes a gestionar<small>mayor monto pendiente de la meta</small></div><div class="body">${gestionSlideHtml(D)}</div>${foot('')}</div>`] : []),
       ...(a.deep && a.deep.seguro ? [`<div class="slide"><div class="band">Seguro de vida y FECI<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP12a" class="schart"></div><div id="sP12b" class="schart"></div></div>${foot('')}</div>`] : []),
@@ -1837,6 +1889,11 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     return md.loans.map(l => ({ l, meta: per.get(l.id) || 0 })).map(x => Object.assign(x, { falta: Math.max(0, x.meta - x.l.pagadoMes) })).filter(x => x.falta > 0.5).sort((x, y) => (y.l.bucket > 0 && y.l.bucket < 4 ? 1 : 0) - (x.l.bucket > 0 && x.l.bucket < 4 ? 1 : 0) || y.falta - x.falta).slice(0, n || 10);
   }
   const slideTable = (heads, rows, right) => `<table style="width:100%;border-collapse:collapse;font-size:clamp(7px,1.15vw,14px)"><thead><tr style="background:#0f2a52;color:#fff">${heads.map((h, i) => `<th style="padding:.5em .7em;text-align:${right.includes(i) ? 'right' : 'left'}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map((r, j) => `<tr style="background:${j % 2 ? '#f1f5fb' : '#fff'}">${r.map((c, i) => `<td style="padding:.4em .7em;text-align:${right.includes(i) ? 'right' : 'left'}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  function letrasSlideHtml() {
+    const md = model(); if (!md) return ''; const E = letrasEstado(md, 'mes');
+    const col = k => k === 'Pagó' ? '#16a34a' : k === 'Parcial' ? '#d97706' : '#dc2626';
+    return `<div style="display:grid;grid-template-columns:1fr 1.6fr;gap:4%;height:100%"><div><div style="font-family:'Space Grotesk';font-weight:700;font-size:clamp(20px,4.5vw,54px);color:${E.cobrado >= E.total ? '#16a34a' : '#d97706'}">${pct(E.total ? E.cobrado / E.total : 0, 0)}</div><div style="font-size:clamp(8px,1.3vw,15px);color:#334155;margin-bottom:6%">de las letras del mes cobradas<br>${money0(E.cobrado)} de ${money0(E.total)}</div>${slideTable(['Estado', 'Préstamos', 'Falta'], E.porEstado.map(g => [`<b style="color:${col(g.k)}">${g.k}</b>`, int(g.n), money0(g.falta)]), [1, 2])}</div><div>${slideTable(['Sucursal', 'Préstamos', 'Vencieron', 'Cobrado', '%'], E.porSuc.map(g => [esc(g.k), int(g.n), money0(g.lt), money0(g.cob), pct(g.lt ? g.cob / g.lt : 0, 0)]), [1, 2, 3, 4])}</div></div>`;
+  }
   function metaOfiSlideHtml() {
     const rows = metaRowsByOficial(); const t = rows.reduce((s, r) => ({ meta: s.meta + r.meta, real: s.real + r.real, no: s.no + r.no, n: s.n + r.n }), { meta: 0, real: 0, no: 0, n: 0 });
     return slideTable(['Oficial', 'Préstamos', 'Meta', 'Cobrado', 'Cumplimiento', 'Sin pagar'], rows.map(r => [esc(r.k), int(r.n), money0(r.meta), money0(r.real), `<b style="color:${r.real >= r.meta ? '#16a34a' : '#dc2626'}">${pct(r.meta ? r.real / r.meta : 0, 0)}</b>`, int(r.no)]).concat([['<b>Total</b>', `<b>${int(t.n)}</b>`, `<b>${money0(t.meta)}</b>`, `<b>${money0(t.real)}</b>`, `<b>${pct(t.meta ? t.real / t.meta : 0, 0)}</b>`, `<b>${int(t.no)}</b>`]]), [1, 2, 3, 4, 5]);
@@ -1922,6 +1979,13 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: a.deep.byRate.map(x => x.k), values: a.deep.byRate.map(x => Math.round(x.saldo)) }], { x: 6.8, y: 1.2, w: 6.1, h: 5.6, barDir: 'bar', chartColors: ['0EA5E9', '1D4ED8', '6366F1', 'A855F7', 'EC4899', '64748B'], varyColors: true, catAxisOrientation: 'maxMin', valAxisHidden: true, showValue: true, dataLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: 'Saldo por tasa de interés', titleFontSize: 13 });
       }
       if (md) {
+        // resumen de letras del mes (estado de pago)
+        { const E = letrasEstado(md, 'mes'); const HD0 = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
+          s = pptx.addSlide({ masterName: 'M' }); title(s, 'Letras del mes', 'vencieron vs cobrado · ' + a.label);
+          s.addText(pct(E.total ? E.cobrado / E.total : 0, 0), { x: 0.6, y: 1.3, w: 4, h: 1.1, fontSize: 54, bold: true, color: E.cobrado >= E.total ? '16A34A' : 'D97706' });
+          s.addText(`de las letras del mes cobradas\n${money0(E.cobrado)} de ${money0(E.total)}`, { x: 0.6, y: 2.4, w: 5.2, h: 0.9, fontSize: 15, color: '334155' });
+          s.addTable([[HD0('Estado'), HD0('Préstamos'), HD0('Falta')], ...E.porEstado.map(g => [{ text: g.k, options: { bold: true, color: g.k === 'Pagó' ? '16A34A' : g.k === 'Parcial' ? 'D97706' : 'DC2626' } }, String(g.n), money0(g.falta)])], { x: 0.6, y: 3.6, w: 5.2, fontSize: 14, rowH: 0.45, border: { type: 'solid', color: 'E2E8F0', pt: 1 } });
+          s.addTable([[HD0('Sucursal'), HD0('Préstamos'), HD0('Vencieron'), HD0('Cobrado'), HD0('%')], ...E.porSuc.map(g => [g.k, String(g.n), money0(g.lt), money0(g.cob), pct(g.lt ? g.cob / g.lt : 0, 0)])], { x: 6.2, y: 1.3, w: 6.7, fontSize: 13, rowH: 0.42, border: { type: 'solid', color: 'E2E8F0', pt: 1 } }); }
         const HD = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
         const mo = metaRowsByOficial(); const tt = mo.reduce((q, r) => ({ meta: q.meta + r.meta, real: q.real + r.real, no: q.no + r.no, n: q.n + r.n }), { meta: 0, real: 0, no: 0, n: 0 });
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Meta de cobros por oficial', a.label);
