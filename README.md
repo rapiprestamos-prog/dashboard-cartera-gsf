@@ -4,15 +4,18 @@ Dashboard interactivo que lee los reportes del SIF (Grupo de Servicios Financier
 
 - **Resumen 3D**: cartera, PAR30/PAR90, saldo moroso, recaudo, intereses y gastos de manejo.
 - **Morosidad**: tramos de días de mora, antigüedad del saldo vencido, mapa de calor producto × tramo, patronos y oficiales, lista de clientes en mora y matriz de transición entre meses.
-- **Meta de cobros**: meta = cuotas del mes + % de recuperación por tramo (ajustable), cumplimiento, avance diario, meta por oficial y lista de cobro.
+- **Análisis a fondo**: 25 mayores clientes, curva de concentración, cosechas (saldo y PAR30 por año de desembolso), perfil de vencimientos, tasas, antigüedad del último pago, refinanciados y composición del saldo.
+- **Meta de cobros**: meta = cuotas del mes + % de recuperación por tramo (ajustable), cumplimiento, avance diario, meta por oficial y lista de cobro. Descarga su propio Excel (por tramo, oficial, patrono, lista de cobro y quién no pagó).
 - **Ingresos**: intereses y GM devengados, FECI, seguro de vida, cancelados y por vencer.
-- **Excel GSF**: genera "GSF - Cartera Cierre <fecha>.xlsx" (morosidad al cierre + saldos por rubro) y un Excel de análisis.
+- **Excel GSF**: genera "GSF - Cartera Cierre <fecha>.xlsx" (morosidad al cierre + saldos por rubro) con hojas opcionales de resumen, meta de cobros, 25 mayores clientes y análisis; además un Excel de análisis completo.
 - **Presentación gerencial**: en pantalla y descargable en PowerPoint con gráficos editables.
 - **Ver reportes**: abre u oculta cada Excel original.
 
 ## Datos
 
-El dashboard **no trae datos**. Los Excel se leen en el navegador al cargarlos; no se suben a ningún servidor. Cada reporte se reconoce por el código que trae dentro (`Reporte: pprxxxx`), así que el nombre del archivo no importa. Cuando corre como artifact de Claude, solo se guardan los totales de cada mes en el historial privado del usuario; fuera de Claude se guardan en el navegador (localStorage).
+El dashboard **no trae datos**. Los Excel se leen en el navegador al cargarlos; no se suben a ningún servidor. Cada reporte se reconoce por el código que trae dentro (`Reporte: pprxxxx`), así que el nombre del archivo no importa. El historial guarda solo totales de cada mes y el tramo por número de contrato (nunca nombres, cédulas ni saldos por cliente): como artifact de Claude, en el almacenamiento privado de la cuenta; fuera de Claude (Vercel, GitHub Pages, archivo local), en el localStorage del navegador. Se puede exportar e importar como .json desde la pestaña Cargar / historial.
+
+Se pueden arrastrar todos los reportes juntos, o la carpeta completa, sobre cualquier parte de la página.
 
 ## Uso
 

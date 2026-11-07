@@ -1,7 +1,11 @@
 import json,sys
 test = len(sys.argv)>1 and sys.argv[1]=='test'
-CDN={'echarts':'https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js','echartsgl':'https://cdnjs.cloudflare.com/ajax/libs/echarts-gl/2.0.9/echarts-gl.min.js','xlsx':'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js','exceljs':'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js','pptx':'https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js'}
-LOC={'echarts':'node_modules/echarts/dist/echarts.min.js','echartsgl':'node_modules/echarts-gl/dist/echarts-gl.min.js','xlsx':'node_modules/xlsx/dist/xlsx.full.min.js','exceljs':'node_modules/exceljs/dist/exceljs.min.js','pptx':'node_modules/pptxgenjs/dist/pptxgen.bundle.js'}
+CDN={'echarts':['https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js','https://unpkg.com/echarts@5.5.0/dist/echarts.min.js','https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js'],
+ 'echartsgl':['https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js','https://unpkg.com/echarts-gl@2.0.9/dist/echarts-gl.min.js'],
+ 'xlsx':['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js','https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js','https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'],
+ 'exceljs':['https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js','https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js','https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js'],
+ 'pptx':['https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js','https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js']}
+LOC={'echarts':['node_modules/echarts/dist/echarts.min.js'],'echartsgl':['node_modules/echarts-gl/dist/echarts-gl.min.js'],'xlsx':['node_modules/xlsx/dist/xlsx.full.min.js'],'exceljs':['node_modules/exceljs/dist/exceljs.min.js'],'pptx':['nope.js','node_modules/pptxgenjs/dist/pptxgen.bundle.js']}
 L=LOC if test else CDN
 html=f'''<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
@@ -11,7 +15,6 @@ html=f'''<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>{open('src/app.css').read()}
 header.top{{padding-top:env(safe-area-inset-top)}}</style>
-<script src="{L['echarts']}"></script>
 </head><body>
 {open('src/body.html').read()}
 <script>window.__LIBS__={json.dumps(L)};</script>

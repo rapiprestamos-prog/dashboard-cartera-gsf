@@ -363,10 +363,11 @@
     const agingTot = AGING.map((a, i) => r2(L.reduce((s, l) => s + (l.aging ? l.aging[i] : 0), 0)));
     const byBucket = BUCKETS.map((b, i) => { const g = L.filter(l => l.bucket === i); return { k: b, n: g.length, saldo: sum(g, l => l.saldo), moroso: sum(g, l => l.totalMoroso), pagado: sum(g, l => l.pagadoMes) }; });
     const top = (arr, n) => { if (arr.length <= n) return arr; const head = arr.slice(0, n); const rest = arr.slice(n); const o = { k: 'Otros (' + rest.length + ')', n: 0, saldo: 0, moroso: 0, enMora: 0, par30: 0, corriente: 0, cuotaMes: 0, pagado: 0 }; rest.forEach(g => { for (const k in o) if (typeof g[k] === 'number') o[k] += g[k]; }); for (const k in o) if (typeof o[k] === 'number') o[k] = r2(o[k]); head.push(o); return head; };
-    const contratos = {}; L.forEach(l => contratos[l.id] = [l.bucket, r2(l.saldo)]);
+    const contratos = {}; L.forEach(l => contratos[l.id] = l.bucket);
     const prodBucket = groupSum(L, l => l.producto, (g, l) => { g.b = g.b || [0, 0, 0, 0, 0, 0]; g.b[l.bucket] = r2(g.b[l.bucket] + l.saldo); });
+    const deep = deepAnalysis(model);
     return {
-      v: 1, month: model.month, label: monthLabel(model.month), savedAt: new Date().toISOString(), reports: model.reportsLoaded,
+      v: 2, month: model.month, label: monthLabel(model.month), deep, savedAt: new Date().toISOString(), reports: model.reportsLoaded,
       kpi, agingTot, byBucket,
       byProduct: prodBucket,
       bySucursal: groupSum(L, l => l.sucursal),
@@ -380,6 +381,59 @@
       contratos
     };
   }
+  // ---------- análisis a fondo (sin datos personales) ----------
+  function deepAnalysis(model) {
+    const L = model.loans; const end = model.month ? lastDay(model.month) : new Date().toISOString().slice(0, 10);
+    const tot = L.reduce((s, l) => s + l.saldo, 0) || 1;
+    const add = (m, k, l) => { let g = m.get(k); if (!g) { g = { k, n: 0, saldo: 0, par30: 0, moroso: 0, pagado: 0 }; m.set(k, g); } g.n++; g.saldo += l.saldo; g.moroso += l.totalMoroso; g.pagado += l.pagadoMes; if (l.dias > 30) g.par30 += l.saldo; };
+    const fin = (m, order) => { let arr = [...m.values()]; arr.forEach(g => { g.saldo = r2(g.saldo); g.par30 = r2(g.par30); g.moroso = r2(g.moroso); g.pagado = r2(g.pagado); g.pct = g.saldo / tot; g.par30Pct = g.saldo ? g.par30 / g.saldo : 0; }); if (order) arr.sort((a, b) => order.indexOf(a.k) - order.indexOf(b.k)); else arr.sort((a, b) => String(a.k).localeCompare(String(b.k))); return arr; };
+    // cosechas por año de desembolso
+    const vin = new Map(); L.forEach(l => add(vin, l.fprest ? l.fprest.slice(0, 4) : '—', l));
+    // perfil de vencimiento
+    const MAT = ['Ya vencidos', 'Vence en 12 meses', '1 a 2 años', '2 a 3 años', '3 a 5 años', 'Más de 5 años'];
+    const yrs = d => (Date.parse(d) - Date.parse(end)) / (365.25 * 864e5);
+    const mat = new Map(); L.forEach(l => { const y = l.fvenc ? yrs(l.fvenc) : 0; add(mat, y < 0 ? MAT[0] : y <= 1 ? MAT[1] : y <= 2 ? MAT[2] : y <= 3 ? MAT[3] : y <= 5 ? MAT[4] : MAT[5], l); });
+    // tasas
+    const RATE = ['Hasta 10%', '10% a 12%', '12% a 14%', '14% a 16%', 'Más de 16%', 'Sin dato'];
+    const rate = new Map(); let wr = 0, ws = 0, wg = 0, wgs = 0;
+    L.forEach(l => { const t = +l.rub.tint; const k = !isFinite(t) || !t ? RATE[5] : t <= 10 ? RATE[0] : t <= 12 ? RATE[1] : t <= 14 ? RATE[2] : t <= 16 ? RATE[3] : RATE[4]; add(rate, k, l); if (isFinite(t) && t) { wr += t * l.saldo; ws += l.saldo; } const g = +l.rub.gm; if (isFinite(g) && g) { wg += g * l.saldo; wgs += l.saldo; } });
+    // antigüedad del último pago
+    const LP = ['Pagó este mes', '1 a 3 meses', '3 a 6 meses', '6 a 12 meses', '1 a 3 años', 'Más de 3 años', 'Nunca ha pagado'];
+    const lp = new Map(); L.forEach(l => { const f = validDate(l.fult); let k; if (!f) k = LP[6]; else { const m = (Date.parse(end) - Date.parse(f)) / (30.44 * 864e5); k = m < 1 ? LP[0] : m <= 3 ? LP[1] : m <= 6 ? LP[2] : m <= 12 ? LP[3] : m <= 36 ? LP[4] : LP[5]; } add(lp, k, l); });
+    // refinanciados
+    const refi = new Map(); L.forEach(l => add(refi, /^S/i.test(l.refi) ? 'Refinanciado' : 'Original', l));
+    // forma de pago
+    const freq = new Map(); L.forEach(l => add(freq, freqName(l.freq) || '—', l));
+    // composición del saldo por tramo (rubros)
+    const comp = BUCKETS.map((b, i) => { const g = L.filter(l => l.bucket === i); const s = f => r2(g.reduce((a, l) => a + (l.rub[f] || 0), 0)); return { k: b, capital: s('capital'), interes: s('interes'), manejo: s('manejo'), feci: s('feci'), segVida: s('segVida') }; });
+    // concentración por cliente (agrupado por cédula, sin guardar nombres)
+    const cl = new Map(); L.forEach(l => { const k = l.cedula || l.nombre; cl.set(k, (cl.get(k) || 0) + l.saldo); });
+    const sorted = [...cl.values()].sort((a, b) => b - a); const cum = []; let acc = 0; sorted.forEach(v => { acc += v; cum.push(acc / tot); });
+    const at = n => cum[Math.min(n, cum.length) - 1] || 0;
+    const pareto = [1, 5, 10, 25, 50, 100].filter(n => n <= sorted.length).map(n => ({ n, pct: at(n) }));
+    const multi = [...new Map(L.map(l => [l.cedula || l.nombre, 0])).keys()].length;
+    // cuota mensual vs cobrado (eficiencia de cobro de clientes al día)
+    return {
+      byVintage: fin(vin), byMaturity: fin(mat, MAT), byRate: fin(rate, RATE), byLastPay: fin(lp, LP), byRefi: fin(refi), byFreq: fin(freq), comp,
+      tasaProm: ws ? wr / ws : 0, gmProm: wgs ? wg / wgs : 0, clientes: cl.size, conVarios: L.length - multi,
+      top10Pct: at(10), top25Pct: at(25), top1Pct: at(1), pareto, curve: cum.filter((_, i) => i % Math.max(1, Math.floor(cum.length / 60)) === 0 || i === cum.length - 1).map(x => +x.toFixed(4)),
+      plazoProm: L.length ? L.reduce((s, l) => s + (l.fprest && l.fvenc ? (Date.parse(l.fvenc) - Date.parse(l.fprest)) / (30.44 * 864e5) : 0), 0) / L.length : 0
+    };
+  }
+  // Mayores clientes (requiere el detalle del mes; no se guarda en el historial)
+  function topClients(model, n) {
+    const tot = model.loans.reduce((s, l) => s + l.saldo, 0) || 1;
+    const m = new Map();
+    model.loans.forEach(l => {
+      const k = l.cedula || l.nombre; let g = m.get(k);
+      if (!g) { g = { cedula: l.cedula, nombre: l.nombre, prestamos: 0, contratos: [], monto: 0, saldo: 0, moroso: 0, cuotaMes: 0, pagadoMes: 0, bucket: 0, dias: 0, patrono: l.patrono, oficial: l.oficial, producto: l.producto, fult: l.fult }; m.set(k, g); }
+      g.prestamos++; g.contratos.push(l.id); g.monto += l.monto; g.saldo += l.saldo; g.moroso += l.totalMoroso; g.cuotaMes += l.cuotaMes; g.pagadoMes += l.pagadoMes;
+      if (l.bucket > g.bucket) { g.bucket = l.bucket; } if (l.dias > g.dias) g.dias = l.dias; if ((l.fult || '') > (g.fult || '')) g.fult = l.fult;
+    });
+    let acc = 0;
+    return [...m.values()].sort((a, b) => b.saldo - a.saldo).slice(0, n || 25).map((g, i) => { acc += g.saldo; return Object.assign(g, { rank: i + 1, pct: g.saldo / tot, cumPct: acc / tot, clas: BUCKETS[g.bucket] }); });
+  }
+
   function groupBy(arr, kf, vf) {
     const m = {}; arr.forEach(x => { const k = kf(x) || '—'; const v = vf(x); m[k] = m[k] || {}; for (const f in v) m[k][f] = r2((m[k][f] || 0) + v[f]); });
     return Object.entries(m).map(([k, v]) => Object.assign({ k }, v));
@@ -391,10 +445,11 @@
     const M = BUCKETS.map(() => BUCKETS.map(() => ({ n: 0, saldo: 0 }))); const salieron = BUCKETS.map(() => ({ n: 0, saldo: 0 }));
     const nuevos = BUCKETS.map(() => ({ n: 0, saldo: 0 }));
     for (const id in prevAgg.contratos) {
-      const [b0, s0] = prevAgg.contratos[id]; const cur = curAgg.contratos[id];
-      if (cur) { M[b0][cur[0]].n++; M[b0][cur[0]].saldo += cur[1]; } else { salieron[b0].n++; salieron[b0].saldo += s0; }
+      const p0 = prevAgg.contratos[id], c0 = curAgg.contratos[id];
+      const b0 = Array.isArray(p0) ? p0[0] : p0; const b1 = c0 == null ? null : (Array.isArray(c0) ? c0[0] : c0);
+      if (b1 != null) M[b0][b1].n++; else salieron[b0].n++;
     }
-    for (const id in curAgg.contratos) if (!prevAgg.contratos[id]) { const [b, s] = curAgg.contratos[id]; nuevos[b].n++; nuevos[b].saldo += s; }
+    for (const id in curAgg.contratos) if (prevAgg.contratos[id] == null) { const c1 = curAgg.contratos[id]; nuevos[Array.isArray(c1) ? c1[0] : c1].n++; }
     return { M, salieron, nuevos };
   }
 
@@ -417,6 +472,6 @@
     });
   }
 
-  const api = { metaFromAgg, BUCKET_TOP, REPORTS, BY_KEY, BUCKETS, AGING, MESES, DEFAULT_CONFIG, GSF_HEAD, GSF_TYPES, readReport, bufToAOA, identify, reportMeta, batchMonth, buildModel, aggregate, computeMeta, rollMatrix, gsfRows, monthLabel, lastDay, nextMonth, freqName, bucketOf, validDate, r2 };
+  const api = { topClients, deepAnalysis, metaFromAgg, BUCKET_TOP, REPORTS, BY_KEY, BUCKETS, AGING, MESES, DEFAULT_CONFIG, GSF_HEAD, GSF_TYPES, readReport, bufToAOA, identify, reportMeta, batchMonth, buildModel, aggregate, computeMeta, rollMatrix, gsfRows, monthLabel, lastDay, nextMonth, freqName, bucketOf, validDate, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);

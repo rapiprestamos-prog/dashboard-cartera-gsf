@@ -26,7 +26,14 @@
   const loaded = {};
   function loadScript(key) {
     if (loaded[key]) return loaded[key];
-    loaded[key] = new Promise((res, rej) => { const s = document.createElement('script'); s.src = LIBS[key]; s.onload = res; s.onerror = () => rej(new Error('No se pudo cargar ' + key)); document.head.appendChild(s); });
+    const urls = [].concat(LIBS[key]);
+    const tryOne = i => new Promise((res, rej) => {
+      if (i >= urls.length) return rej(new Error('No se pudo descargar la librería "' + key + '". Revisa tu conexión a internet y vuelve a intentar.'));
+      const s = document.createElement('script'); s.src = urls[i]; s.async = true;
+      s.onload = res; s.onerror = () => { s.remove(); tryOne(i + 1).then(res, rej); };
+      document.head.appendChild(s);
+    });
+    loaded[key] = tryOne(0).catch(e => { delete loaded[key]; throw e; });
     return loaded[key];
   }
 
@@ -209,6 +216,7 @@
         ${kpiCard('Saldo moroso', short(k.moroso), `${pct(k.morosoPct)} de la cartera`, '#e11d48')}
         ${kpiCard('Recaudo del mes', short(k.recaudo), `<span class="chip ${cumpl >= 1 ? 'up' : cumpl >= .85 ? 'warn' : 'down'}">${pct(cumpl, 0)} de la meta</span> ${delta(k.recaudo, pk && pk.recaudo)}`, '#34d399')}
         ${kpiCard('Intereses + GM del mes', short(k.interesesMes + k.gmMes), `Int ${short(k.interesesMes)} · GM ${short(k.gmMes)}`, '#818cf8')}
+        ${a.deep ? kpiCard('25 mayores clientes', pct(a.deep.top25Pct), `de la cartera · <a href="#analisis" style="color:#93c5fd">ver lista</a>`, '#a78bfa') : ''}
       </div>
       <div class="grid g21 mt">
         <div class="card"><h3>Cartera por producto y tramo de mora <small>3D · arrastra para girar</small></h3><div id="c3d" class="chart tall"></div></div>
@@ -331,6 +339,82 @@
     }
   }
 
+
+  // ---------- ANÁLISIS A FONDO ----------
+  function renderAnalisis() {
+    const v = $('#v-analisis'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
+    const d = a.deep; const md = model();
+    if (!d) { v.innerHTML = `<div class="card">${needDetail('Este mes se guardó con una versión anterior del dashboard.')}</div>`; return; }
+    const k = a.kpi;
+    v.innerHTML = `
+      <div class="vhead"><div><h2>Análisis a fondo · ${esc(a.label)}</h2><p>Concentración, mayores clientes, cosechas, vencimientos, tasas, antigüedad del último pago y composición del saldo.</p></div>
+        <div class="tools" style="margin:0"><button class="btn" id="anaXls" ${md ? '' : 'disabled title="Requiere los reportes del mes"'}>Excel del análisis</button></div></div>
+      <div class="grid g-kpi">
+        ${kpiCard('25 mayores clientes', pct(d.top25Pct), 'de la cartera · top 10 = ' + pct(d.top10Pct), '#818cf8')}
+        ${kpiCard('Cliente más grande', pct(d.top1Pct), 'de la cartera', '#a78bfa')}
+        ${kpiCard('Tasa promedio', d.tasaProm.toFixed(2) + '%', 'ponderada por saldo · GM ' + d.gmProm.toFixed(2) + '%', '#38bdf8')}
+        ${kpiCard('Plazo promedio', Math.round(d.plazoProm) + ' meses', int(d.clientes) + ' clientes', '#22d3ee')}
+        ${kpiCard('Sin pagar hace +1 año', short(d.byLastPay.filter(x => /años|Nunca/.test(x.k)).reduce((s, x) => s + x.saldo, 0)), int(d.byLastPay.filter(x => /años|Nunca/.test(x.k)).reduce((s, x) => s + x.n, 0)) + ' préstamos', '#f87171')}
+        ${kpiCard('Refinanciados', int((d.byRefi.find(x => x.k === 'Refinanciado') || {}).n || 0), short((d.byRefi.find(x => x.k === 'Refinanciado') || {}).saldo || 0) + ' de saldo', '#fbbf24')}
+      </div>
+      <div class="card mt"><h3>Los 25 mayores clientes <small>por saldo · concentran ${pct(d.top25Pct)} de la cartera</small></h3><div id="topTbl">${md ? '' : needDetail('La lista con nombres se arma con los reportes del mes; no se guarda en el historial.')}</div></div>
+      <div class="grid g2 mt">
+        <div class="card"><h3>Curva de concentración <small>% acumulado de la cartera por cliente</small></h3><div id="aPareto" class="chart"></div></div>
+        <div class="card"><h3>Cosechas: saldo y mora por año de desembolso</h3><div id="aVin" class="chart"></div></div>
+      </div>
+      <div class="grid g2 mt">
+        <div class="card"><h3>Perfil de vencimiento del saldo</h3><div id="aMat" class="chart"></div></div>
+        <div class="card"><h3>¿Hace cuánto pagaron por última vez?</h3><div id="aLp" class="chart"></div></div>
+      </div>
+      <div class="grid g2 mt">
+        <div class="card"><h3>Saldo por tasa de interés</h3><div id="aRate" class="chart"></div></div>
+        <div class="card"><h3>Composición del saldo por tramo <small>capital, intereses, manejo, FECI, seguro</small></h3><div id="aComp" class="chart"></div></div>
+      </div>
+      <div class="grid g2 mt">
+        <div class="card"><h3>Refinanciados vs originales</h3><div id="aRefi" class="chart short"></div></div>
+        <div class="card"><h3>Lo que dicen estos datos</h3><ul class="ins" id="anaIns"></ul></div>
+      </div>`;
+    enableTilt(v);
+    $('#anaXls') && ($('#anaXls').onclick = downloadAnalysis);
+    if (md) {
+      const top = C.topClients(md, 25);
+      table($('#topTbl'), [
+        { h: '#', v: t => t.rank, n: 1 }, { h: 'Cliente', v: t => t.nombre }, { h: 'Cédula', v: t => t.cedula }, { h: 'Patrono', v: t => t.patrono }, { h: 'Oficial', v: t => t.oficial },
+        { h: 'Saldo', v: t => t.saldo, n: 1, f: money, sum: 1 }, { h: '% cartera', v: t => t.pct, n: 1, f: x => pct(x, 2) }, { h: '% acum.', v: t => t.cumPct, n: 1, f: x => pct(x, 1) },
+        { h: 'Tramo', v: t => t.bucket, f: b => `<span class="badge b${b}">${C.BUCKETS[b]}</span>` }, { h: 'Moroso', v: t => t.moroso, n: 1, f: money, sum: 1 }, { h: 'Cuota mes', v: t => t.cuotaMes, n: 1, f: money, sum: 1 },
+        { h: 'Cobrado mes', v: t => t.pagadoMes, n: 1, f: money, sum: 1 }, { h: 'Últ. pago', v: t => t.fult || '', f: dd }
+      ], top, { sort: 0, dir: 1, total: true, pageSize: 25 });
+    }
+    const curve = d.curve || [];
+    chart('aPareto', { tooltip: tip({ axisPointer: { type: 'line' }, formatter: ps => `${Math.round((ps[0].dataIndex / Math.max(1, curve.length - 1)) * 100)}% de los clientes<br><b>${pct(ps[0].value)}</b> de la cartera` }), grid: { left: 50, right: 20, top: 20, bottom: 36 }, xAxis: { type: 'category', data: curve.map((_, i) => Math.round(i / Math.max(1, curve.length - 1) * 100) + '%'), name: '% de clientes', nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: '#9fb0d8' }, axisLabel: { color: '#9fb0d8', interval: Math.floor(curve.length / 5) }, axisLine: axisStyle.axisLine },
+      yAxis: { type: 'value', max: 1, axisLabel: { color: '#9fb0d8', formatter: v => (v * 100) + '%' }, splitLine: axisStyle.splitLine },
+      series: [{ type: 'line', data: curve, smooth: true, showSymbol: false, lineStyle: { width: 3, color: '#818cf8' }, areaStyle: { color: grad('rgba(129,140,248,.5)', 'rgba(129,140,248,0)') }, markLine: { symbol: 'none', silent: true, lineStyle: { color: 'rgba(255,255,255,.25)', type: 'dashed' }, data: [[{ coord: [0, 0] }, { coord: [curve.length - 1, 1] }]] } }] });
+    const vin = d.byVintage;
+    chart('aVin', { tooltip: tip(), legend: { top: 0, textStyle: { color: '#9fb0d8' } }, grid: { left: 60, right: 50, top: 36, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: vin.map(x => x.k) }, axisStyle),
+      yAxis: [{ type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine }, { type: 'value', max: 100, axisLabel: { color: '#9fb0d8', formatter: v => v + '%' }, splitLine: { show: false } }],
+      series: [{ name: 'Saldo', type: 'bar', barWidth: '55%', data: vin.map(x => x.saldo), itemStyle: { color: grad('#38bdf8', '#1e3a8a'), borderRadius: [6, 6, 0, 0], shadowBlur: 10, shadowColor: 'rgba(56,189,248,.3)' }, tooltip: { valueFormatter: v => money0(v) } }, { name: 'PAR30 %', type: 'line', yAxisIndex: 1, data: vin.map(x => +(x.par30Pct * 100).toFixed(1)), symbolSize: 9, lineStyle: { color: '#f87171', width: 3 }, itemStyle: { color: '#f87171' }, label: { show: true, color: '#fca5a5', fontSize: 10, formatter: p => p.value + '%' }, tooltip: { valueFormatter: v => v + '%' } }] });
+    const bar2 = (id, rows, colors) => chart(id, { tooltip: tip({ formatter: ps => { const x = rows[ps[0].dataIndex]; return `${x.k}<br>Saldo: <b>${money0(x.saldo)}</b> (${pct(x.pct)})<br>${x.n} préstamos · PAR30 ${pct(x.par30Pct)}`; } }), grid: { left: 10, right: 60, top: 10, bottom: 10, containLabel: true }, xAxis: { type: 'value', axisLabel: { show: false }, splitLine: axisStyle.splitLine }, yAxis: { type: 'category', inverse: true, data: rows.map(x => x.k), axisLabel: { color: '#cbd5f5', fontSize: 11 } },
+      series: [{ type: 'bar', barWidth: 16, data: rows.map((x, i) => ({ value: x.saldo, itemStyle: { color: grad(colors[i % colors.length], shade(colors[i % colors.length], -.5), true), borderRadius: [0, 8, 8, 0], shadowBlur: 10, shadowColor: 'rgba(0,0,0,.4)' } })), label: { show: true, position: 'right', color: '#e8eeff', fontSize: 10.5, formatter: p => short(p.value) } }] });
+    bar2('aMat', d.byMaturity, ['#f87171', '#fbbf24', '#a3e635', '#34d399', '#22d3ee', '#818cf8']);
+    bar2('aLp', d.byLastPay, ['#34d399', '#a3e635', '#fbbf24', '#fb923c', '#f87171', '#e11d48', '#94a3b8']);
+    bar2('aRate', d.byRate, ['#22d3ee', '#38bdf8', '#818cf8', '#a78bfa', '#f472b6', '#94a3b8']);
+    const cp = d.comp; const RUB = [['capital', 'Capital', '#38bdf8'], ['interes', 'Intereses', '#818cf8'], ['segVida', 'Seguro vida', '#f472b6'], ['feci', 'FECI', '#22d3ee'], ['manejo', 'Manejo', '#fbbf24']];
+    chart('aComp', { tooltip: tip({ valueFormatter: v => money0(v) }), legend: { top: 0, textStyle: { color: '#9fb0d8' } }, grid: { left: 60, right: 14, top: 36, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: cp.map(x => x.k) }, axisStyle), yAxis: { type: 'value', axisLabel: { color: '#9fb0d8', formatter: v => short(v) }, splitLine: axisStyle.splitLine },
+      series: RUB.map((r, i) => ({ name: r[1], type: 'bar', stack: 'c', data: cp.map(x => x[r[0]]), itemStyle: { color: r[2], borderRadius: i === RUB.length - 1 ? [6, 6, 0, 0] : 0 }, barWidth: '50%' })) });
+    chart('aRefi', { tooltip: { trigger: 'item', formatter: p => `${p.name}<br><b>${money0(p.value)}</b> · ${p.percent}%` }, series: [{ type: 'pie', radius: ['48%', '75%'], itemStyle: { borderRadius: 10, borderColor: '#0b1226', borderWidth: 3 }, label: { color: '#e8eeff', formatter: p => `${p.name}\n${short(p.value)} · PAR30 ${pct(d.byRefi[p.dataIndex].par30Pct, 0)}` }, data: d.byRefi.map((x, i) => ({ name: x.k, value: x.saldo, itemStyle: { color: ['#38bdf8', '#fbbf24'][i] } })) }] });
+    const ins = [];
+    ins.push({ t: d.top25Pct > .5 ? 'bad' : d.top25Pct > .3 ? 'warn' : 'good', x: `Los 25 mayores clientes concentran ${pct(d.top25Pct)} de la cartera y los 10 mayores ${pct(d.top10Pct)}.` });
+    const vOld = vin.filter(x => x.k < String(+a.month.slice(0, 4) - 3)); const vNew = vin.filter(x => x.k >= String(+a.month.slice(0, 4) - 3));
+    const pr = arr => { const s = arr.reduce((t, x) => t + x.saldo, 0); return s ? arr.reduce((t, x) => t + x.par30, 0) / s : 0; };
+    if (vOld.length && vNew.length) ins.push({ t: pr(vNew) > .1 ? 'warn' : 'good', x: `Los préstamos desembolsados en los últimos 3 años tienen PAR30 de ${pct(pr(vNew))}; los más antiguos, ${pct(pr(vOld))}.` });
+    const old = d.byLastPay.filter(x => /años|Nunca/.test(x.k)); const os = old.reduce((s, x) => s + x.saldo, 0);
+    if (os) ins.push({ t: 'bad', x: `${int(old.reduce((s, x) => s + x.n, 0))} préstamos no registran pagos hace más de un año (${short(os)}, ${pct(os / (k.cartera || 1))} de la cartera). Son candidatos a castigo o cobro judicial.` });
+    const venc = d.byMaturity[0]; if (venc && venc.n) ins.push({ t: 'warn', x: `${int(venc.n)} préstamos ya pasaron su fecha final con ${short(venc.saldo)} de saldo.` });
+    const rf = d.byRefi.find(x => x.k === 'Refinanciado'), og = d.byRefi.find(x => x.k === 'Original'); if (rf && og) ins.push({ t: rf.par30Pct > og.par30Pct ? 'warn' : 'good', x: `Los refinanciados tienen PAR30 de ${pct(rf.par30Pct)} frente a ${pct(og.par30Pct)} de los originales.` });
+    const cap = d.comp.reduce((s, c) => s + c.capital, 0), oth = d.comp.reduce((s, c) => s + c.interes + c.manejo + c.feci + c.segVida, 0); ins.push({ t: 'warn', x: `Del saldo total, ${short(cap)} es capital y ${short(oth)} son intereses, manejo, FECI y seguro por cobrar.` });
+    $('#anaIns').innerHTML = ins.map(i => `<li class="${i.t}"><i></i><span>${esc(i.x)}</span></li>`).join('');
+  }
+
   // ---------- META DE COBROS ----------
   function renderMeta() {
     const v = $('#v-meta'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
@@ -339,7 +423,8 @@
     const real = a.kpi.recaudo; const cumpl = mf.meta ? real / mf.meta : 0;
     const thr = [30, 60, 90, 120, 365];
     v.innerHTML = `
-      <div class="vhead"><div><h2>Meta de cobros</h2><p>La meta junta dos partes: las cuotas del mes de los préstamos que siguen pagando y un % de recuperación de lo vencido por tramo. Ajusta los supuestos y todo se recalcula.</p></div></div>
+      <div class="vhead"><div><h2>Meta de cobros</h2><p>La meta junta dos partes: las cuotas del mes de los préstamos que siguen pagando y un % de recuperación de lo vencido por tramo. Ajusta los supuestos y todo se recalcula.</p></div>
+        <div class="tools" style="margin:0"><button class="btn pri" id="metaXls"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>Excel de meta de cobros</button></div></div>
       <div class="grid g12">
         <div class="card ctrl" id="metaCtrl">
           <h3>Supuestos de la meta</h3>
@@ -369,6 +454,7 @@
       <div class="card mt"><h3>Detalle por tramo</h3><div id="metaTbl"></div></div>
       <div class="card mt"><h3>Lista de cobro <small>quién debía pagar y cuánto falta</small></h3><div id="cobroTbl">${md ? '' : needDetail('La lista de cobro por cliente usa los reportes del mes.')}</div></div>`;
     enableTilt(v);
+    $('#metaXls').onclick = downloadMeta;
     const upd = () => { saveConfig(); renderStamp++; Object.keys(rendered).forEach(k => rendered[k] = null); rendered.meta = S.current + '|' + renderStamp; renderMeta(); };
     $('#sThr').oninput = e => { cfg.cuotaHastaDias = thr[+e.target.value]; $('#oThr').textContent = cfg.cuotaHastaDias + ' días'; };
     $('#sThr').onchange = upd;
@@ -464,10 +550,14 @@
         <div class="card"><h3>Vista previa <small>${int(md.loans.length)} préstamos · 42 columnas</small></h3><div id="gsfPrev"></div></div>
         <div class="card ctrl">
           <h3>Descargar</h3>
-          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="gsfRes" checked> Agregar hoja "Resumen" por clasificación y patrono</label>
+          <div class="note" style="margin:0">Hoja principal igual a tu Excel. Hojas adicionales:</div>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="gsfRes" checked> Resumen por clasificación y patrono</label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="gsfMeta" checked> Meta de cobros (por tramo, oficial, patrono, lista de cobro y quién no pagó)</label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="gsfTop" checked> 25 mayores clientes</label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="gsfAna" checked> Análisis (cosechas, vencimientos, tasas, último pago, composición)</label>
           <button class="btn pri" id="dlGsf"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>GSF - Cartera Cierre ${esc(fileMonth(md.month))}.xlsx</button>
           <button class="btn" id="dlAna">Análisis completo del mes (.xlsx)</button>
-          <div class="note">El análisis trae hojas por tramo, producto, patrono, oficial, meta y la lista de cobro.</div>
+          <div class="note">El análisis completo trae hojas por tramo, producto, patrono, oficial, meta, lista de cobro, 25 mayores clientes, cosechas, vencimientos, tasas y último pago.</div>
           <h3 class="mt">Nombres de patrono <small>para la columna C</small></h3>
           <div class="note" style="margin-top:-4px">Si quieres que un patrono salga con otro nombre en la columna C, escríbelo aquí; se recuerda para los próximos meses.</div>
           <input class="inp" id="patQ" placeholder="Filtrar patronos…">
@@ -478,7 +568,7 @@
     const rows = C.gsfRows(md, S.config);
     const cols = C.GSF_HEAD.map((h, j) => ({ h: String(h), v: r => r[j], n: ['m', 'i', 'n'].includes(C.GSF_TYPES[j]), f: C.GSF_TYPES[j] === 'm' ? (x => x == null ? '' : nf2.format(x)) : C.GSF_TYPES[j] === 'd' ? dd : null }));
     table($('#gsfPrev'), cols, rows, { pageSize: 25, sort: -1 });
-    $('#dlGsf').onclick = () => downloadGSF($('#gsfRes').checked);
+    $('#dlGsf').onclick = () => downloadGSF($('#gsfRes').checked, { meta: $('#gsfMeta').checked, top25: $('#gsfTop').checked, analisis: $('#gsfAna').checked });
     $('#dlAna').onclick = downloadAnalysis;
     const pats = [...new Set(md.loans.map(l => l.patrono).filter(x => x && x !== '—'))].sort();
     const drawMap = (q) => {
@@ -499,18 +589,29 @@
     if (!window.claude) { const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); return; }
     toast('Las descargas no están disponibles en esta vista. Abre el dashboard en claude.ai.');
   }
-  async function downloadGSF(resumen) {
+  async function downloadGSF(resumen, sheets) {
     const md = model(); if (!md) return;
     loader(true, 'Armando el Excel GSF…', 30);
     try {
       await loadScript('exceljs');
       const cierre = reports().find(r => r.key === 'cierre');
-      const wb = await Exporters.gsfWorkbook(md, S.config, { resumen, cierreMeta: { printed: cierre && cierre.meta.printedRaw } });
+      const wb = await Exporters.gsfWorkbook(md, S.config, { resumen, sheets: sheets || {}, agg: agg(), prevAgg: prevAgg(), cierreMeta: { printed: cierre && cierre.meta.printedRaw } });
       loader(true, 'Generando archivo…', 80);
       const buf = await wb.xlsx.writeBuffer();
       loader(false);
       await saveFile(`GSF - Cartera Cierre ${fileMonth(md.month)}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     } catch (e) { loader(false); console.error(e); toast('Error al generar el Excel: ' + e.message); }
+  }
+  async function downloadMeta() {
+    const md = model(); const a = agg(); if (!a) return;
+    loader(true, 'Armando el Excel de meta de cobros…', 30);
+    try {
+      await loadScript('exceljs');
+      const wb = await Exporters.metaWorkbook(md, a, S.config, prevAgg());
+      const buf = await wb.xlsx.writeBuffer(); loader(false);
+      if (!md) toast('Sin los reportes del mes el Excel trae solo los totales por tramo.', 5000);
+      await saveFile(`Meta de cobros ${a.label}.xlsx`, new Blob([buf]));
+    } catch (e) { loader(false); console.error(e); toast('Error: ' + e.message); }
   }
   async function downloadAnalysis() {
     const md = model(); const a = agg(); if (!a) return;
@@ -543,10 +644,13 @@
       `<div class="slide"><div class="band">Calidad de la cartera<small>saldo por tramo de mora</small></div><div class="body"><div id="sP2" class="schart"></div></div>${foot(4)}</div>`,
       `<div class="slide"><div class="band">Dónde se concentra el riesgo<small>top patronos por PAR30</small></div><div class="body"><div id="sP3" class="schart"></div></div>${foot(5)}</div>`,
       `<div class="slide"><div class="band">Cobros vs meta<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1.6fr;gap:3%"><div id="sP4a" class="schart"></div><div id="sP4b" class="schart"></div></div>${foot(6)}</div>`,
+      `<div class="slide"><div class="band">Concentración: mayores clientes<small>${a.deep ? pct(a.deep.top25Pct) + ' de la cartera en 25 clientes' : ''}</small></div><div class="body">${model() ? topSlideHtml(C.topClients(model(), 10)) : '<div id="sP7" class="schart"></div>'}</div>${foot('')}</div>`,
+      ...(a.deep ? [`<div class="slide"><div class="band">Cosechas y antigüedad de pago<small>saldo y PAR30 por año de desembolso</small></div><div class="body" style="display:grid;grid-template-columns:1.3fr 1fr;gap:3%"><div id="sP8" class="schart"></div><div id="sP9" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(hist ? [`<div class="slide"><div class="band">Evolución mensual<small>cartera, recaudo y PAR30</small></div><div class="body"><div id="sP6" class="schart"></div></div>${foot(7)}</div>`] : []),
       `<div class="slide"><div class="band">Hallazgos</div><div class="body"><ul class="slist">${D.ins.slice(0, 6).map(i => `<li>${esc(i.x)}</li>`).join('')}</ul></div>${foot(hist ? 8 : 7)}</div>`,
       `<div class="slide"><div class="band">Recomendaciones y próximos pasos</div><div class="body"><ul class="slist">${D.rec.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>${foot(hist ? 9 : 8)}</div>`
     ];
+    for (let i = 0; i < slides.length; i++) slides[i] = slides[i].replace(/<div class="foot"><span>([^<]*)<\/span><span>[^<]*<\/span><\/div>/, (m, s) => `<div class="foot"><span>${s}</span><span>${i + 1}</span></div>`);
     slideIx = Math.min(slideIx, slides.length - 1);
     v.innerHTML = `
       <div class="vhead"><div><h2>Presentación gerencial</h2><p>Se arma sola con los datos del mes. Preséntala aquí en pantalla completa o descárgala en PowerPoint con gráficos editables.</p></div>
@@ -563,6 +667,9 @@
     $('#pptBtn').onclick = () => downloadPPT(D);
     show(slideIx);
   }
+  function topSlideHtml(top) {
+    return `<table style="width:100%;border-collapse:collapse;font-size:clamp(7px,1.15vw,14px)"><thead><tr style="background:#0f2a52;color:#fff">${['#', 'Cliente', 'Patrono', 'Saldo', '% cartera', 'Tramo'].map(h => `<th style="padding:.5em .7em;text-align:${/Saldo|%/.test(h) ? 'right' : 'left'}">${h}</th>`).join('')}</tr></thead><tbody>${top.map((t, i) => `<tr style="background:${i % 2 ? '#f1f5fb' : '#fff'}"><td style="padding:.4em .7em">${t.rank}</td><td style="padding:.4em .7em">${esc(t.nombre)}</td><td style="padding:.4em .7em">${esc(String(t.patrono).slice(0, 30))}</td><td style="padding:.4em .7em;text-align:right">${money0(t.saldo)}</td><td style="padding:.4em .7em;text-align:right">${pct(t.pct)}</td><td style="padding:.4em .7em;color:${t.bucket > 1 ? '#dc2626' : '#16a34a'};font-weight:600">${t.clas}</td></tr>`).join('')}</tbody></table>`;
+  }
   function drawSlideCharts(D) {
     const a = D.a; const light = { textStyle: { fontFamily: 'Inter', color: '#334155' } };
     const ax = { axisLine: { lineStyle: { color: '#cbd5e1' } }, axisLabel: { color: '#334155', fontSize: 11 }, splitLine: { lineStyle: { color: '#eef2f7' } } };
@@ -575,6 +682,9 @@
       const rd = a.recaudoDiario || []; let acc = 0;
       chart('sP4b', Object.assign({}, light, { tooltip: tip({ axisPointer: { type: 'line' } }), grid: { left: 60, right: 20, top: 20, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: rd.map(x => x.d.slice(8, 10) + '/' + x.d.slice(5, 7)), boundaryGap: false }, ax), yAxis: Object.assign({ type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) } }, { splitLine: ax.splitLine }), series: [{ type: 'line', smooth: true, showSymbol: false, data: rd.map(x => (acc += x.v)), lineStyle: { width: 3, color: '#1d4ed8' }, areaStyle: { color: 'rgba(29,78,216,.12)' }, markLine: { symbol: 'none', lineStyle: { color: '#f59e0b', type: 'dashed', width: 2 }, label: { formatter: 'Meta ' + short(D.mf.meta), color: '#b45309' }, data: [{ yAxis: D.mf.meta }] } }] }));
     }
+    if (on('sP7') && a.deep) chart('sP7', Object.assign({}, light, { grid: { left: 60, right: 20, top: 20, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: a.deep.pareto.map(p => 'Top ' + p.n) }, ax), yAxis: Object.assign({ type: 'value', max: 1, axisLabel: { color: '#334155', formatter: v => v * 100 + '%' } }, { splitLine: ax.splitLine }), series: [{ type: 'bar', barWidth: '50%', data: a.deep.pareto.map(p => p.pct), itemStyle: { color: '#6366f1', borderRadius: [6, 6, 0, 0] }, label: { show: true, position: 'top', color: '#0f1f3d', formatter: p => pct(p.value) } }] }));
+    if (on('sP8') && a.deep) { const vin = a.deep.byVintage; chart('sP8', Object.assign({}, light, { legend: { top: 0, textStyle: { color: '#334155' } }, grid: { left: 60, right: 44, top: 30, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: vin.map(x => x.k) }, ax), yAxis: [{ type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) }, splitLine: ax.splitLine }, { type: 'value', max: 100, axisLabel: { color: '#334155', formatter: v => v + '%' }, splitLine: { show: false } }], series: [{ name: 'Saldo', type: 'bar', data: vin.map(x => x.saldo), itemStyle: { color: '#1d4ed8' } }, { name: 'PAR30 %', type: 'line', yAxisIndex: 1, data: vin.map(x => +(x.par30Pct * 100).toFixed(1)), lineStyle: { color: '#dc2626', width: 3 }, itemStyle: { color: '#dc2626' } }] }));
+      const lp = a.deep.byLastPay; chart('sP9', Object.assign({}, light, { title: { text: 'Último pago', left: 'center', textStyle: { fontSize: 13, color: '#0f1f3d' } }, grid: { left: 10, right: 50, top: 30, bottom: 10, containLabel: true }, xAxis: { type: 'value', show: false }, yAxis: { type: 'category', inverse: true, data: lp.map(x => x.k), axisLabel: { color: '#0f1f3d', fontSize: 10.5 }, axisLine: { show: false }, axisTick: { show: false } }, series: [{ type: 'bar', barWidth: '55%', data: lp.map((x, i) => ({ value: x.saldo, itemStyle: { color: ['#16a34a', '#84cc16', '#eab308', '#f97316', '#ef4444', '#be123c', '#64748b'][i] } })), label: { show: true, position: 'right', color: '#0f1f3d', formatter: p => short(p.value) } }] })); }
     if (on('sP6')) { const H = months().map(m => S.history[m]); chart('sP6', Object.assign({}, light, { tooltip: tip(), legend: { top: 0, textStyle: { color: '#334155' } }, grid: { left: 60, right: 50, top: 34, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: H.map(h => h.label) }, ax), yAxis: [{ type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) }, splitLine: ax.splitLine }, { type: 'value', axisLabel: { color: '#334155', formatter: v => v + '%' }, splitLine: { show: false } }], series: [{ name: 'Cartera', type: 'bar', data: H.map(h => h.kpi.cartera), itemStyle: { color: '#1d4ed8' } }, { name: 'Recaudo', type: 'bar', data: H.map(h => h.kpi.recaudo), itemStyle: { color: '#22c55e' } }, { name: 'PAR30 %', type: 'line', yAxisIndex: 1, data: H.map(h => +(h.kpi.par30Pct * 100).toFixed(1)), lineStyle: { color: '#dc2626', width: 3 }, itemStyle: { color: '#dc2626' } }] })); }
   }
   async function downloadPPT(D) {
@@ -607,6 +717,22 @@
       s.addText(`Meta propuesta ${C.monthLabel(C.nextMonth(a.month))}: ${money0(D.next.meta)}`, { x: 0.7, y: 5.6, w: 4, h: 0.6, fontSize: 14, bold: true, color: BLUE });
       const rd = a.recaudoDiario || []; let acc = 0;
       if (rd.length) s.addChart(pptx.ChartType.line, [{ name: 'Cobrado acumulado', labels: rd.map(x => x.d.slice(8, 10) + '/' + x.d.slice(5, 7)), values: rd.map(x => Math.round(acc += x.v)) }, { name: 'Meta', labels: rd.map(x => x.d.slice(8, 10)), values: rd.map(() => Math.round(D.mf.meta)) }], { x: 4.8, y: 1.2, w: 8, h: 5.7, chartColors: ['1D4ED8', 'F59E0B'], lineSize: 3, lineDataSymbol: 'none', valAxisLabelFormatCode: '$#,##0', showLegend: true, legendPos: 'b' });
+      const md = model();
+      if (md || a.deep) {
+        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Concentración: mayores clientes', a.deep ? pct(a.deep.top25Pct) + ' de la cartera en 25 clientes' : '');
+        if (md) {
+          const top = C.topClients(md, 10); const H = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
+          s.addTable([[H('#'), H('Cliente'), H('Patrono'), H('Saldo'), H('% cartera'), H('Tramo')], ...top.map(t => [String(t.rank), t.nombre, String(t.patrono).slice(0, 34), money0(t.saldo), pct(t.pct), { text: t.clas, options: { color: t.bucket > 1 ? 'DC2626' : '16A34A', bold: true } }])], { x: 0.5, y: 1.2, w: 12.3, fontSize: 14, rowH: 0.44, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: [0.5, 4.2, 3.9, 1.5, 1.1, 1.1], autoPage: false });
+        }
+        if (a.deep) s.addText(a.deep.pareto.map(p => `Top ${p.n}: ${pct(p.pct)}`).join('   ·   '), { x: 0.5, y: 6.45, w: 12.3, h: 0.4, fontSize: 13, color: BLUE, bold: true });
+      }
+      if (a.deep) {
+        const vin = a.deep.byVintage, lp = a.deep.byLastPay;
+        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Cosechas y antigüedad de pago', a.label);
+        s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: vin.map(x => x.k), values: vin.map(x => Math.round(x.saldo)) }], { x: 0.5, y: 1.2, w: 6.4, h: 5.6, barDir: 'col', chartColors: ['1D4ED8'], valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: 'Saldo por año de desembolso', titleFontSize: 13 });
+        s.addTable([[{ text: 'Cosecha', options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } }, { text: 'PAR30 %', options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } }], ...vin.map(x => [x.k, pct(x.par30Pct)])], { x: 7.1, y: 1.3, w: 2.1, fontSize: 10, border: { type: 'solid', color: 'E2E8F0', pt: 1 } });
+        s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: lp.map(x => x.k), values: lp.map(x => Math.round(x.saldo)) }], { x: 9.3, y: 1.2, w: 3.8, h: 5.6, barDir: 'bar', chartColors: ['16A34A', '84CC16', 'EAB308', 'F97316', 'EF4444', 'BE123C', '64748B'], varyColors: true, catAxisOrientation: 'maxMin', valAxisHidden: true, showValue: true, dataLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: 'Último pago', titleFontSize: 13, catAxisLabelFontSize: 9 });
+      }
       if (months().length > 1) {
         const H = months().map(m => S.history[m]);
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Evolución mensual', 'cartera y recaudo');
@@ -648,17 +774,20 @@
   function renderCargar() {
     const v = $('#v-cargar'); const reps = reports(); const have = new Set(reps.map(r => r.key));
     v.innerHTML = `<div class="vhead"><div><h2>Cargar reportes del mes</h2><p>Selecciona todos los Excel del cierre a la vez. El dashboard reconoce cada reporte por su código, detecta el mes y guarda los totales en tu historial. El detalle de clientes se procesa solo en tu navegador y no se guarda.</p></div></div>
-      <div class="drop" id="drop"><div class="big"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg></div><h3>Toca para elegir los archivos o arrástralos aquí</h3><div class="muted">.XLS del SIF y feci.xls · puedes subirlos todos juntos</div></div>
+      <div class="drop" id="drop"><div class="big"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg></div><h3>Toca para elegir los archivos o arrástralos aquí</h3><div class="muted">.XLS del SIF y feci.xls · todos juntos o la carpeta completa · también puedes soltarlos en cualquier pestaña</div></div>
       <div class="card mt"><h3>Reportes que entiende el dashboard <small>${S.current ? esc(C.monthLabel(S.current)) : ''}</small></h3><div class="replist">${C.REPORTS.map(r => `<div class="rep ${have.has(r.key) ? 'ok' : ''}"><span class="dot"></span><div class="nm"><b>${esc(r.name)}</b><span>${r.code === 'feci' ? 'feci_AAAAMMDD.xls' : esc(r.code)}${r.core ? ' · clave' : ''}</span></div></div>`).join('')}</div>
         <div class="note">Los marcados como "clave" son los necesarios para el Excel GSF y la morosidad. Si falta alguno, el resto del dashboard sigue funcionando con lo que haya.</div></div>
-      <div class="card mt"><h3>Historial guardado <small>${S.store ? 'en tu cuenta' : 'en este navegador'}</small></h3><div id="histTbl"></div></div>`;
+      <div class="card mt"><h3>Historial guardado <small>${S.store ? 'en tu cuenta de Claude' : 'en este navegador'}</small></h3>
+        <div class="note" style="margin:-4px 0 12px">${S.store ? 'Se guarda en el almacenamiento privado de tu cuenta de Claude: solo tú lo ves, en cualquier dispositivo donde abras este dashboard.' : 'Se guarda en el almacenamiento local de este navegador (localStorage), en este equipo. No se sube a ningún servidor: otro navegador o dispositivo tiene su propio historial, y si borras los datos del navegador se pierde. Usa Exportar / Importar para pasarlo de un equipo a otro.'} Solo guarda los totales de cada mes (cartera, mora, recaudo, meta, cosechas, totales por patrono y oficial) y el tramo de mora de cada número de contrato, que sirve para ver quién cambió de tramo de un mes a otro. Nunca guarda nombres de clientes, cédulas ni saldos por cliente.</div>
+        <div class="tools"><button class="btn sm" id="histExp" ${months().length ? '' : 'disabled'}>Exportar historial (.json)</button><button class="btn sm" id="histImp">Importar historial</button><input type="file" id="histFile" accept=".json,application/json" hidden></div>
+        <div id="histTbl"></div></div>`;
     const drop = $('#drop');
     drop.onclick = () => $('#fileIn').click();
-    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-    drop.addEventListener('drop', e => handleFiles([...e.dataTransfer.files]));
     const ms = months().slice().reverse();
     $('#histTbl').innerHTML = ms.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Mes</th><th class="n">Cartera</th><th class="n">PAR30</th><th class="n">Recaudo</th><th>Detalle</th><th></th></tr></thead><tbody>${ms.map(m => { const h = S.history[m]; return `<tr><td><b>${esc(h.label)}</b></td><td class="n">${money0(h.kpi.cartera)}</td><td class="n">${pct(h.kpi.par30Pct)}</td><td class="n">${money0(h.kpi.recaudo)}</td><td>${S.models[m] ? '<span class="chip up">cargado</span>' : '<span class="muted">solo totales</span>'}</td><td class="right"><button class="btn sm ghost" data-go="${m}">Ver</button> <button class="btn sm ghost" data-del="${m}">Borrar</button></td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted">Todavía no hay meses guardados.</div>';
+    $('#histExp').onclick = () => { const out = {}; months().forEach(m => out[m] = S.history[m]); saveFile(`Historial dashboard cartera ${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify({ tipo: 'historial-dashboard-cartera', v: 1, meses: out, config: S.config }, null, 1)], { type: 'application/json' })); };
+    $('#histImp').onclick = () => $('#histFile').click();
+    $('#histFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const j = JSON.parse(await f.text()); if (j.tipo !== 'historial-dashboard-cartera' || !j.meses) throw new Error('Ese archivo no es un historial del dashboard.'); let n = 0; for (const m in j.meses) { const h = j.meses[m]; if (h && h.month && h.kpi) { S.history[h.month] = h; await saveMonth(h); n++; } } if (j.config) { mergeConfig(j.config); saveConfig(); } S.current = months().slice(-1)[0]; renderAll(); toast(`${n} meses importados`); } catch (er) { toast('No se pudo importar: ' + er.message, 5000); } };
     $$('[data-go]', v).forEach(b => b.onclick = () => { S.current = b.dataset.go; go('resumen'); });
     $$('[data-del]', v).forEach(b => b.onclick = async () => { if (b.dataset.confirm) { await deleteMonth(b.dataset.del); if (!S.history[S.current]) S.current = months().slice(-1)[0] || null; renderAll(); toast('Mes borrado'); } else { b.dataset.confirm = 1; b.textContent = '¿Seguro?'; setTimeout(() => { b.textContent = 'Borrar'; delete b.dataset.confirm; }, 3000); } });
   }
@@ -697,8 +826,39 @@
     } catch (e) { loader(false); console.error(e); toast('Error al leer: ' + e.message, 6000); }
   }
 
+  // ---------- arrastrar y soltar en toda la página (archivos o carpetas) ----------
+  let dragDepth = 0;
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+  function readEntry(entry) {
+    return new Promise(res => {
+      if (!entry) return res([]);
+      if (entry.isFile) entry.file(f => res([f]), () => res([]));
+      else if (entry.isDirectory) {
+        const rd = entry.createReader(); const all = [];
+        const next = () => rd.readEntries(async ents => { if (!ents.length) { const nested = await Promise.all(all.map(readEntry)); res(nested.flat()); } else { all.push(...ents); next(); } }, () => res([]));
+        next();
+      } else res([]);
+    });
+  }
+  async function filesFromDrop(dt) {
+    const items = [...(dt.items || [])].filter(i => i.kind === 'file');
+    const entries = items.map(i => i.webkitGetAsEntry ? i.webkitGetAsEntry() : null);
+    if (entries.length && entries.every(Boolean)) { const lists = await Promise.all(entries.map(readEntry)); const out = lists.flat(); if (out.length) return out; }
+    return [...(dt.files || [])];
+  }
+  document.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+  document.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  document.addEventListener('dragleave', e => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
+  document.addEventListener('drop', async e => {
+    if (!e.dataTransfer) return; e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+    const files = await filesFromDrop(e.dataTransfer);
+    const ok = files.filter(f => /\.xlsx?$/i.test(f.name));
+    if (!ok.length) { toast(files.length ? 'Esos archivos no son Excel (.xls / .xlsx).' : 'No llegaron archivos. Prueba con el botón Cargar mes.', 5000); return; }
+    handleFiles(ok);
+  });
+
   // ---------- navegación ----------
-  const VIEWS = { resumen: renderResumen, morosidad: renderMora, meta: renderMeta, ingresos: renderIngresos, excel: renderExcel, presentacion: renderPres, reportes: renderReportes, cargar: renderCargar };
+  const VIEWS = { resumen: renderResumen, morosidad: renderMora, analisis: renderAnalisis, meta: renderMeta, ingresos: renderIngresos, excel: renderExcel, presentacion: renderPres, reportes: renderReportes, cargar: renderCargar };
   const rendered = {};
   function go(tab) {
     if (!VIEWS[tab]) tab = 'resumen';
@@ -721,6 +881,7 @@
   // ---------- inicio ----------
   (async function init() {
     loadScript('xlsx').catch(() => { });
+    try { await loadScript('echarts'); } catch (e) { toast(e.message, 8000); }
     await storeInit();
     S.current = months().slice(-1)[0] || null;
     const h = location.hash.slice(1); S.tab = VIEWS[h] ? h : 'resumen';
