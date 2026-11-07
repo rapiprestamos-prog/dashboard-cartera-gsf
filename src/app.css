@@ -160,3 +160,6 @@ table.t tfoot td{position:sticky;bottom:0;background:#111c3a;font-weight:700}
 .dropall b{display:block;font-family:'Space Grotesk';font-size:24px;margin-top:6px}.dropall span{color:var(--tx2)}
 .dropall .big{width:74px;height:74px;margin:0 auto 12px;border-radius:20px;display:grid;place-items:center;background:linear-gradient(135deg,#0ea5e9,#6366f1);box-shadow:0 14px 30px -12px rgba(99,102,241,.9),0 4px 0 #312e81}
 body.dragging .dropall{display:grid}
+
+.lock{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:radial-gradient(800px 500px at 20% 0%,rgba(56,189,248,.18),transparent 60%),radial-gradient(700px 500px at 100% 100%,rgba(129,140,248,.2),transparent 60%),#060a18;padding:16px}
+.lockbox{width:min(400px,100%);padding:26px 22px}

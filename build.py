@@ -7,6 +7,8 @@ CDN={'echarts':['https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js'
  'pptx':['https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js','https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js']}
 LOC={'echarts':['node_modules/echarts/dist/echarts.min.js'],'echartsgl':['node_modules/echarts-gl/dist/echarts-gl.min.js'],'xlsx':['node_modules/xlsx/dist/xlsx.full.min.js'],'exceljs':['node_modules/exceljs/dist/exceljs.min.js'],'pptx':['nope.js','node_modules/pptxgenjs/dist/pptxgen.bundle.js']}
 L=LOC if test else CDN
+import os
+GS_URL=os.environ.get('GS_URL','')
 html=f'''<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -17,7 +19,7 @@ html=f'''<!DOCTYPE html>
 header.top{{padding-top:env(safe-area-inset-top)}}</style>
 </head><body>
 {open('src/body.html').read()}
-<script>window.__LIBS__={json.dumps(L)};</script>
+<script>window.__LIBS__={json.dumps(L)};window.__GS_URL__={json.dumps(GS_URL)};window.__APPS_SCRIPT__={json.dumps(open('apps-script/Code.gs').read())};</script>
 <script>{open('src/core.js').read()}</script>
 <script>{open('src/exporters.js').read()}</script>
 <script>{open('src/app.js').read()}</script>

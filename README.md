@@ -41,3 +41,19 @@ python3 build.py
 ```
 
 Librerías (CDN): SheetJS, ExcelJS, ECharts, ECharts GL, PptxGenJS.
+
+## Contraseña e historial en Google Sheets
+
+Fuera de Claude (Vercel, GitHub Pages o archivo local) el dashboard pide contraseña al entrar. La contraseña no está en el código: la valida el Apps Script (`CLAVE` en `apps-script/Code.gs`). Sin la contraseña correcta no se abre el dashboard ni se pueden leer los datos de la hoja.
+
+Instalación (cuenta de Google proyectosrapiprestamos):
+
+1. Crea un Google Sheet nuevo: "Historial dashboard cartera".
+2. Extensiones → Apps Script. Pega `apps-script/Code.gs` y cambia `CLAVE` por tu contraseña.
+3. Ejecuta la función `instalar` (crea las hojas Meses, Clientes, Modelo y Config) y acepta los permisos.
+4. Implementar → Nueva implementación → Aplicación web. Ejecutar como: Yo. Acceso: Cualquier persona. Copia la URL `/exec`.
+5. Abre el dashboard, pega la URL y escribe la contraseña. En Cargar / historial elige si se guarda también el detalle por cliente.
+
+Para que el dashboard ya traiga la URL y solo pida la contraseña: `GS_URL="https://script.google.com/macros/s/…/exec" python3 build.py`.
+
+Tamaño: con detalle, cada mes ocupa unos 130 KB comprimidos en la hoja Modelo y 271 filas en Clientes.

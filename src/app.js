@@ -19,7 +19,7 @@
   const dd = s => { if (!s || s < '1901') return '—'; const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
 
   // ---------- estado ----------
-  const S = { config: JSON.parse(JSON.stringify(C.DEFAULT_CONFIG)), history: {}, models: {}, current: null, tab: 'resumen', moraMig: true, store: null, uid: null, downloads: null };
+  const S = { config: JSON.parse(JSON.stringify(C.DEFAULT_CONFIG)), history: {}, models: {}, current: null, tab: 'resumen', moraMig: true, store: null, uid: null, downloads: null, gs: null, gsDetalle: {}, gsStatus: '' };
   const capUse = n => (window.claude && typeof window.claude.use === 'function') ? window.claude.use(n).catch(() => null) : Promise.resolve(null);
 
   // ---------- carga de librerías ----------
@@ -39,7 +39,63 @@
 
   // ---------- almacenamiento ----------
   const LS = { get(k) { try { return JSON.parse(localStorage.getItem('gsfdash.' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('gsfdash.' + k, JSON.stringify(v)); } catch (e) { } }, del(k) { try { localStorage.removeItem('gsfdash.' + k); } catch (e) { } } };
+  // ---------- Google Sheets (Apps Script) ----------
+  const SS = { get(k) { try { return sessionStorage.getItem('gsfdash.' + k); } catch (e) { return null; } }, set(k, v) { try { sessionStorage.setItem('gsfdash.' + k, v); } catch (e) { } }, del(k) { try { sessionStorage.removeItem('gsfdash.' + k); } catch (e) { } } };
+  const gsCfg = () => {
+    if (S.gs) return S.gs;
+    const saved = LS.get('sheets') || {};
+    S.gs = { url: saved.url || window.__GS_URL__ || '', key: SS.get('key') || saved.key || '', detalle: !!saved.detalle };
+    return S.gs;
+  };
+  function gsRemember(remember) { const g = gsCfg(); LS.set('sheets', { url: g.url, detalle: g.detalle, key: remember ? g.key : undefined }); SS.set('key', g.key); }
+  const gsOn = () => { const g = gsCfg(); return !!(g.url && g.key); };
+  async function gsGet(params) {
+    const g = gsCfg(); const q = new URLSearchParams(Object.assign({}, params, { key: g.key }));
+    const r = await withTimeout(fetch(g.url + (g.url.includes('?') ? '&' : '?') + q.toString(), { redirect: 'follow' }), 60000);
+    const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Error en Google Sheets'); return j;
+  }
+  async function gsPost(body) {
+    const g = gsCfg();
+    const r = await withTimeout(fetch(g.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({}, body, { key: g.key })) }), 120000);
+    const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Error en Google Sheets'); return j;
+  }
+  async function gzip(str) {
+    if (typeof CompressionStream === 'undefined') return 'raw:' + str;
+    const cs = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+    const buf = new Uint8Array(await new Response(cs).arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return 'gz:' + btoa(bin);
+  }
+  async function gunzip(s) {
+    if (!s) return null; if (s.startsWith('raw:')) return s.slice(4);
+    const bin = atob(s.slice(3)); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    const ds = new Blob([u]).stream().pipeThrough(new DecompressionStream('gzip')); return await new Response(ds).text();
+  }
+  const LITE_R = ['recaudo', 'pagos', 'intereses', 'cancelados', 'aVencer', 'vencidos', 'segvida', 'feci'];
+  function modelLite(md) { const R = {}; LITE_R.forEach(k => R[k] = md.R[k] || []); return { month: md.month, baseFrom: md.baseFrom, reportsLoaded: md.reportsLoaded, loans: md.loans, R }; }
+  function clientesRows(md) {
+    return md.loans.map(l => [l.id, l.nombre, l.cedula, String(l.sucursal).replace(/^\d+\s+/, ''), l.producto, l.patrono, l.oficial, l.clas, l.dias, l.monto, l.saldo, l.corriente, l.totalMoroso, l.letra, C.freqName(l.freq), l.letrasMes || 0, l.letrasSig || 0, l.pagadoMes, l.fprest || '', l.fini || '', l.fvenc || '', C.validDate(l.fult) || '', l.estado]);
+  }
+  async function gsSaveMonth(ag, md) {
+    const body = { action: 'saveMonth', agg: ag };
+    if (gsCfg().detalle && md) { body.modelo = await gzip(JSON.stringify(modelLite(md))); body.clientes = clientesRows(md); }
+    await gsPost(body); S.gsDetalle[ag.month] = !!body.modelo;
+  }
+  async function gsLoadModel(ym) {
+    const j = await gsGet({ action: 'getModel', month: ym }); const txt = await gunzip(j.data); if (!txt) return null;
+    const md = JSON.parse(txt); md.R = md.R || {}; return md;
+  }
   async function storeInit() {
+    if (gsOn()) {
+      try {
+        const [lst, cfg] = await Promise.all([gsGet({ action: 'list' }), gsGet({ action: 'getConfig' }).catch(() => ({}))]);
+        (lst.meses || []).forEach(m => { S.history[m.month] = m.agg; S.gsDetalle[m.month] = m.detalle; });
+        if (cfg && cfg.config) mergeConfig(cfg.config);
+        S.gsStatus = 'ok'; return;
+      } catch (e) { S.gsStatus = 'error: ' + e.message; toast('No se pudo leer Google Sheets (' + e.message + '). Se usa el historial de este navegador.', 7000); }
+    }
+    return storeInitBase();
+  }
+  async function storeInitBase() {
     const [db, user] = await Promise.all([capUse('db'), capUse('user')]);
     if (db && user) {
       try { const id = await user.id(); if (id) { S.store = db; S.uid = id; } } catch (e) { }
@@ -60,18 +116,21 @@
     saveCfgT = setTimeout(async () => {
       const body = { meta: S.config.meta, patronoMap: S.config.patronoMap };
       LS.set('config', body);
-      if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('config').set(body); } catch (e) { } }
+      if (gsOn()) { try { await gsPost({ action: 'saveConfig', config: body }); } catch (e) { toast('No se guardó la configuración en Sheets: ' + e.message); } }
+      else if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('config').set(body); } catch (e) { } }
     }, 700);
   }
-  async function saveMonth(agg) {
+  async function saveMonth(agg, md) {
     const all = Object.assign({}, LS.get('history') || {}); all[agg.month] = agg; LS.set('history', all);
+    if (gsOn()) { try { loader(true, 'Guardando en Google Sheets…', 95); await gsSaveMonth(agg, md); return 'sheets'; } catch (e) { toast('No se pudo guardar en Google Sheets: ' + e.message + '. Quedó en este navegador.', 7000); return false; } }
     if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('m' + agg.month.replace('-', '')).set(agg); return true; } catch (e) { toast('Guardado solo en este navegador (' + (e.code || 'error') + ').'); } }
     return false;
   }
   async function deleteMonth(ym) {
     delete S.history[ym]; delete S.models[ym];
     const all = LS.get('history') || {}; delete all[ym]; LS.set('history', all);
-    if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('m' + ym.replace('-', '')).delete(); } catch (e) { } }
+    if (gsOn()) { try { await gsPost({ action: 'deleteMonth', month: ym }); } catch (e) { toast('No se pudo borrar en Sheets: ' + e.message); } }
+    else if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('m' + ym.replace('-', '')).delete(); } catch (e) { } }
   }
 
   // ---------- utilidades UI ----------
@@ -197,7 +256,7 @@
     const sel = $('#monthSel'); const m = months();
     sel.innerHTML = m.length ? m.slice().reverse().map(x => `<option value="${x}" ${x === S.current ? 'selected' : ''}>${C.monthLabel(x)}${S.models[x] ? '' : ''}</option>`).join('') : '<option>Sin datos</option>';
     const a = agg();
-    $('#subtitle').textContent = a ? `Cierre ${a.label} · ${int(a.kpi.prestamos)} préstamos${S.models[S.current] ? ' · detalle cargado' : ''}` : 'Carga los reportes del mes';
+    $('#subtitle').textContent = a ? `Cierre ${a.label} · ${int(a.kpi.prestamos)} préstamos${S.models[S.current] ? (S.models[S.current].fromSheets ? ' · detalle desde Google Sheets' : ' · detalle cargado') : ''}${gsOn() && S.gsStatus === 'ok' ? ' · historial en Google Sheets' : ''}` : 'Carga los reportes del mes';
   }
 
   // ---------- RESUMEN ----------
@@ -420,7 +479,7 @@
   function renderCuadre() {
     const v = $('#v-cuadre'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
     const md = model();
-    if (!md) { v.innerHTML = `<div class="vhead"><div><h2>Cuadre con los reportes</h2><p>Compara cada número del dashboard contra los totales que trae cada reporte del SIF.</p></div></div>${a.cuadre ? `<div class="grid g-kpi">${kpiCard('Último cuadre', a.cuadre.ok + ' de ' + a.cuadre.total, 'comparaciones exactas', '#34d399')}</div>` : ''}<div class="card mt">${needDetail('El cuadre necesita los reportes originales.')}</div>`; return; }
+    if (!md || !reports().length) { v.innerHTML = `<div class="vhead"><div><h2>Cuadre con los reportes</h2><p>Compara cada número del dashboard contra los totales que trae cada reporte del SIF.</p></div></div>${a.cuadre ? `<div class="grid g-kpi">${kpiCard('Último cuadre', a.cuadre.ok + ' de ' + a.cuadre.total, 'comparaciones exactas', '#34d399')}</div>` : ''}<div class="card mt">${needDetail(md ? 'Este mes viene de Google Sheets: tiene el detalle, pero no los reportes originales que se necesitan para el cuadre completo.' : 'El cuadre necesita los reportes originales.')}</div>`; return; }
     const res = C.reconcile(reports(), md, a);
     const ok = res.filter(r => r.ok).length, bad = res.length - ok, expl = res.filter(r => !r.ok && r.nota).length;
     v.innerHTML = `
@@ -986,7 +1045,25 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       <div class="drop" id="drop"><div class="big"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg></div><h3>Toca para elegir los archivos o arrástralos aquí</h3><div class="muted">.XLS del SIF y feci.xls · todos juntos o la carpeta completa · también puedes soltarlos en cualquier pestaña</div></div>
       <div class="card mt"><h3>Reportes que entiende el dashboard <small>${S.current ? esc(C.monthLabel(S.current)) : ''}</small></h3><div class="replist">${C.REPORTS.map(r => `<div class="rep ${have.has(r.key) ? 'ok' : ''}"><span class="dot"></span><div class="nm"><b>${esc(r.name)}</b><span>${r.code === 'feci' ? 'feci_AAAAMMDD.xls' : esc(r.code)}${r.core ? ' · clave' : ''}</span></div></div>`).join('')}</div>
         <div class="note">Los marcados como "clave" son los necesarios para el Excel GSF y la morosidad. Si falta alguno, el resto del dashboard sigue funcionando con lo que haya.</div></div>
-      <div class="card mt"><h3>Historial guardado <small>${S.store ? 'en tu cuenta de Claude' : 'en este navegador'}</small></h3>
+      <div class="card mt" id="gsCard"><h3>Base de datos en Google Sheets <small>${gsOn() ? (S.gsStatus === 'ok' ? '<span class="chip up">conectado</span>' : S.gsStatus ? '<span class="chip down">sin conexión</span>' : 'configurado') : 'opcional'}</small></h3>
+        <div class="note" style="margin:-4px 0 12px">Guarda el historial en una hoja de Google tuya, para verlo desde cualquier equipo. ${window.claude ? '<b style="color:#fbbf24">Dentro de Claude el navegador bloquea conexiones externas: esto funciona cuando abres el dashboard desde Vercel o como archivo.</b>' : ''}</div>
+        <div class="grid g2" style="gap:10px">
+          <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">URL de la aplicación web (termina en /exec)</span><input class="inp" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(gsCfg().url)}"></label>
+          <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Clave (la misma que pusiste en el Apps Script)</span><input class="inp" id="gsKey" type="password" value="${esc(gsCfg().key)}"></label>
+        </div>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px"><input type="checkbox" id="gsDet" ${gsCfg().detalle ? 'checked' : ''} style="margin-top:3px"> <span>Guardar también el detalle por cliente (nombre, cédula, saldo, letra, cobrado). Permite reabrir meses anteriores y descargar el Excel GSF, las letras y la presentación sin volver a subir los reportes. Quien tenga acceso a la hoja verá esos datos.</span></label>
+        <div class="tools mt"><button class="btn pri sm" id="gsSave">Guardar y probar conexión</button><button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button><button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>${gsOn() ? '<button class="btn sm ghost" id="gsOff">Desconectar</button>' : ''}</div>
+        <div class="note" id="gsMsg">${S.gsStatus && S.gsStatus !== 'ok' ? esc(S.gsStatus) : ''}</div>
+        <details class="mt"><summary style="cursor:pointer;font-weight:600">Cómo crear la hoja (5 minutos)</summary><ol class="note" style="line-height:1.7">
+          <li>Con tu cuenta de Google (por ejemplo proyectosrapiprestamos), crea un Google Sheet nuevo llamado "Historial dashboard cartera".</li>
+          <li>Abre <b>Extensiones → Apps Script</b>, borra lo que haya y pega el código (botón <i>Copiar código</i> o <i>Descargar</i>).</li>
+          <li>En la línea <code>const CLAVE = …</code> pon una clave larga y secreta. Guarda.</li>
+          <li>Elige la función <b>instalar</b> y dale <b>Ejecutar</b>; acepta los permisos. Se crean las hojas Meses, Clientes, Modelo y Config.</li>
+          <li><b>Implementar → Nueva implementación → Aplicación web</b>. Ejecutar como: <b>Yo</b>. Quién tiene acceso: <b>Cualquier persona</b>. Copia la URL que termina en <code>/exec</code>.</li>
+          <li>Pega aquí la URL y la clave, marca si quieres guardar el detalle y toca <b>Guardar y probar conexión</b>. Luego <b>Subir a Sheets los meses de este navegador</b>.</li>
+        </ol><div class="note">La clave evita que alguien con la URL lea o escriba. Si cambias el código del Apps Script, usa <b>Implementar → Administrar implementaciones → Editar → Nueva versión</b> para que la URL siga igual.</div></details>
+      </div>
+      <div class="card mt"><h3>Historial guardado <small>${gsOn() && S.gsStatus === 'ok' ? 'en Google Sheets' : S.store ? 'en tu cuenta de Claude' : 'en este navegador'}</small></h3>
         <div class="note" style="margin:-4px 0 12px">${S.store ? 'Se guarda en el almacenamiento privado de tu cuenta de Claude: solo tú lo ves, en cualquier dispositivo donde abras este dashboard.' : 'Se guarda en el almacenamiento local de este navegador (localStorage), en este equipo. No se sube a ningún servidor: otro navegador o dispositivo tiene su propio historial, y si borras los datos del navegador se pierde. Usa Exportar / Importar para pasarlo de un equipo a otro.'} Solo guarda los totales de cada mes (cartera, mora, recaudo, meta, cosechas, totales por patrono y oficial) y el tramo de mora de cada número de contrato, que sirve para ver quién cambió de tramo de un mes a otro. Nunca guarda nombres de clientes, cédulas ni saldos por cliente.</div>
         <div class="tools"><button class="btn sm" id="histExp" ${months().length ? '' : 'disabled'}>Exportar historial (.json)</button><button class="btn sm" id="histImp">Importar historial</button><input type="file" id="histFile" accept=".json,application/json" hidden></div>
         <div id="histTbl"></div></div>`;
@@ -994,6 +1071,29 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     drop.onclick = () => $('#fileIn').click();
     const ms = months().slice().reverse();
     $('#histTbl').innerHTML = ms.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Mes</th><th class="n">Cartera</th><th class="n">PAR30</th><th class="n">Recaudo</th><th>Detalle</th><th></th></tr></thead><tbody>${ms.map(m => { const h = S.history[m]; return `<tr><td><b>${esc(h.label)}</b></td><td class="n">${money0(h.kpi.cartera)}</td><td class="n">${pct(h.kpi.par30Pct)}</td><td class="n">${money0(h.kpi.recaudo)}</td><td>${S.models[m] ? '<span class="chip up">cargado</span>' : '<span class="muted">solo totales</span>'}</td><td class="right"><button class="btn sm ghost" data-go="${m}">Ver</button> <button class="btn sm ghost" data-del="${m}">Borrar</button></td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted">Todavía no hay meses guardados.</div>';
+    const gsMsg = t => { const el = $('#gsMsg'); if (el) el.innerHTML = t; };
+    $('#gsSave').onclick = async () => {
+      const url = $('#gsUrl').value.trim(), key = $('#gsKey').value.trim();
+      if (!/^https?:\/\//.test(url) || !key) { gsMsg('<span style="color:#f87171">Escribe la URL (/exec) y la clave.</span>'); return; }
+      S.gs = { url, key, detalle: $('#gsDet').checked }; gsRemember(!!(LS.get('sheets') || {}).key);
+      gsMsg('Probando conexión…');
+      try {
+        const p = await gsGet({ action: 'ping' }); const lst = await gsGet({ action: 'list' });
+        (lst.meses || []).forEach(m => { S.history[m.month] = m.agg; S.gsDetalle[m.month] = m.detalle; });
+        S.gsStatus = 'ok'; if (!S.current) S.current = months().slice(-1)[0] || null;
+        toast(`Conectado a "${p.hoja}" · ${(lst.meses || []).length} meses en la hoja`, 5000); renderAll();
+      } catch (e) { S.gsStatus = 'error: ' + e.message; gsMsg('<span style="color:#f87171">No se pudo conectar: ' + esc(e.message) + '</span>'); }
+    };
+    $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(!!(LS.get('sheets') || {}).key); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
+    $('#gsPush').onclick = async () => {
+      const ms = months(); let n = 0;
+      try { for (const m of ms) { loader(true, `Subiendo ${C.monthLabel(m)} a Google Sheets…`, Math.round(100 * n / ms.length)); await gsSaveMonth(S.history[m], S.models[m] && !S.models[m].fromSheets ? S.models[m].model : null); n++; } loader(false); toast(`${n} meses subidos a Google Sheets`); renderAll(); }
+      catch (e) { loader(false); toast('Error al subir: ' + e.message, 6000); }
+    };
+    const code = () => window.__APPS_SCRIPT__ || '';
+    $('#gsCode').onclick = () => saveFile('Code.gs.txt', new Blob([code()], { type: 'text/plain' }));
+    $('#gsCopy').onclick = async () => { try { await navigator.clipboard.writeText(code()); toast('Código copiado'); } catch (e) { toast('No se pudo copiar; usa Descargar'); } };
+    $('#gsOff') && ($('#gsOff').onclick = () => { LS.del('sheets'); SS.del('key'); S.gs = null; S.gsStatus = ''; S.gsDetalle = {}; toast('Desconectado de Google Sheets'); renderAll(); });
     $('#histExp').onclick = () => { const out = {}; months().forEach(m => out[m] = S.history[m]); saveFile(`Historial dashboard cartera ${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify({ tipo: 'historial-dashboard-cartera', v: 1, meses: out, config: S.config }, null, 1)], { type: 'application/json' })); };
     $('#histImp').onclick = () => $('#histFile').click();
     $('#histFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const j = JSON.parse(await f.text()); if (j.tipo !== 'historial-dashboard-cartera' || !j.meses) throw new Error('Ese archivo no es un historial del dashboard.'); let n = 0; for (const m in j.meses) { const h = j.meses[m]; if (h && h.month && h.kpi) { S.history[h.month] = h; await saveMonth(h); n++; } } if (j.config) { mergeConfig(j.config); saveConfig(); } S.current = months().slice(-1)[0]; renderAll(); toast(`${n} meses importados`); } catch (er) { toast('No se pudo importar: ' + er.message, 5000); } };
@@ -1028,10 +1128,10 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       try { const rc = C.reconcile(merged.filter(r => r.key), md, ag); ag.cuadre = { total: rc.length, ok: rc.filter(x => x.ok).length, explicadas: rc.filter(x => !x.ok && x.nota).length }; } catch (e) { console.error(e); }
       S.models[month] = { model: md, reports: merged };
       S.history[month] = ag; S.current = month;
-      const saved = await saveMonth(ag);
+      const saved = await saveMonth(ag, md);
       loader(false);
       const unk = out.filter(r => !r.key).length;
-      const cq = ag.cuadre; toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}.${cq ? ` Cuadre: ${cq.ok} de ${cq.total} exactos${cq.total - cq.ok - cq.explicadas ? `, ${cq.total - cq.ok - cq.explicadas} por revisar` : ''}.` : ''}`, 6000);
+      const cq = ag.cuadre; toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}.${cq ? ` Cuadre: ${cq.ok} de ${cq.total} exactos${cq.total - cq.ok - cq.explicadas ? `, ${cq.total - cq.ok - cq.explicadas} por revisar` : ''}.` : ''}${saved === 'sheets' ? ' Guardado en Google Sheets' + (gsCfg().detalle ? ' con detalle.' : '.') : ''}`, 7000);
       renderAll(); go('resumen');
     } catch (e) { loader(false); console.error(e); toast('Error al leer: ' + e.message, 6000); }
   }
@@ -1081,21 +1181,73 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     const a = $(`#tabs a[data-v="${tab}"]`); if (a && a.scrollIntoView) a.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
   }
   let renderStamp = 0;
-  function renderAll() { renderStamp++; renderMonthSel(); go(S.tab); }
+  const gsLoading = {};
+  function renderAll() {
+    renderStamp++; renderMonthSel(); go(S.tab);
+    const ym = S.current;
+    if (ym && !S.models[ym] && S.gsDetalle[ym] && gsOn() && !gsLoading[ym]) {
+      gsLoading[ym] = true; loader(true, 'Trayendo el detalle de ' + C.monthLabel(ym) + ' desde Google Sheets…', 50);
+      gsLoadModel(ym).then(md => { loader(false); if (md) { S.models[ym] = { model: md, reports: [], fromSheets: true }; if (S.current === ym) renderAll(); } })
+        .catch(e => { loader(false); toast('No se pudo traer el detalle: ' + e.message, 6000); }).finally(() => { gsLoading[ym] = false; });
+    }
+  }
   window.addEventListener('hashchange', () => go(location.hash.slice(1)));
   $$('#tabs a').forEach(a => a.onclick = e => { e.preventDefault(); go(a.dataset.v); });
   $('#monthSel').onchange = e => { S.current = e.target.value; renderAll(); };
   $('#btnUpload').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = e => { handleFiles([...e.target.files]); e.target.value = ''; };
 
+  // ---------- contraseña (la valida el Apps Script; fuera de Claude) ----------
+  function lockScreen() {
+    return new Promise(resolve => {
+      const g = gsCfg();
+      const el = document.createElement('div'); el.className = 'lock';
+      const setup = !g.url;
+      el.innerHTML = `<div class="card lockbox"><div class="cube" style="width:46px;height:46px;margin:0 auto 14px"><div class="c"><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div></div></div>
+        <h2 style="text-align:center">Cartera GSF · Dashboard</h2><p class="muted" style="text-align:center;margin:6px 0 18px">${setup ? 'Conecta la base de datos de Google Sheets para entrar.' : 'Escribe la contraseña para entrar.'}</p>
+        <form id="lockF" class="ctrl" style="gap:10px">
+          <input class="inp" id="lockUrl" placeholder="URL de la aplicación web de Apps Script (…/exec)" style="${setup ? '' : 'display:none'}" value="${esc(g.url)}">
+          <input class="inp" id="lockPw" type="password" placeholder="Contraseña" autocomplete="current-password" autofocus>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px" class="tx2"><input type="checkbox" id="lockRem"> Recordar en este equipo</label>
+          <button class="btn pri" type="submit" style="justify-content:center">Entrar</button>
+          <div class="note" id="lockMsg" style="text-align:center;min-height:18px"></div>
+          ${setup ? '' : '<button type="button" class="btn sm ghost" id="lockChange" style="justify-content:center">Usar otra base de datos</button>'}
+          <button type="button" class="btn sm ghost" id="lockCode" style="justify-content:center">Descargar el código de Apps Script</button>
+        </form></div>`;
+      document.body.appendChild(el);
+      const msg = t => $('#lockMsg', el).innerHTML = t;
+      $('#lockChange', el) && ($('#lockChange', el).onclick = () => { $('#lockUrl', el).style.display = ''; $('#lockUrl', el).focus(); });
+      $('#lockCode', el).onclick = () => { const b = new Blob([window.__APPS_SCRIPT__ || ''], { type: 'text/plain' }); const u = URL.createObjectURL(b); const x = document.createElement('a'); x.href = u; x.download = 'Code.gs.txt'; document.body.appendChild(x); x.click(); x.remove(); };
+      $('#lockF', el).onsubmit = async e => {
+        e.preventDefault();
+        const url = $('#lockUrl', el).value.trim(), pw = $('#lockPw', el).value;
+        if (!/^https?:\/\//.test(url)) { msg('<span style="color:#f87171">Falta la URL de Apps Script.</span>'); return; }
+        if (!pw) { msg('<span style="color:#f87171">Escribe la contraseña.</span>'); return; }
+        msg('Verificando…');
+        S.gs = { url, key: pw, detalle: gsCfg().detalle };
+        try { await gsGet({ action: 'ping' }); gsRemember($('#lockRem', el).checked); S.gsStatus = 'ok'; el.remove(); resolve(); }
+        catch (er) { S.gs.key = ''; msg('<span style="color:#f87171">' + (/clave/i.test(er.message) ? 'Contraseña incorrecta.' : 'No se pudo conectar: ' + esc(er.message)) + '</span>'); }
+      };
+    });
+  }
+  async function needsLock() {
+    if (window.claude) return false; // dentro de Claude el artifact ya es privado y no puede salir a Google
+    const g = gsCfg();
+    if (g.url && g.key) { try { await gsGet({ action: 'ping' }); S.gsStatus = 'ok'; return false; } catch (e) { if (/clave/i.test(e.message)) { SS.del('key'); const s = LS.get('sheets') || {}; delete s.key; LS.set('sheets', s); S.gs = null; } return true; } }
+    return true;
+  }
+  window.gsfLogout = () => { SS.del('key'); const s = LS.get('sheets') || {}; delete s.key; LS.set('sheets', s); location.reload(); };
+
   // ---------- inicio ----------
   (async function init() {
+    if (await needsLock()) await lockScreen();
     loadScript('xlsx').catch(() => { });
     try { await loadScript('echarts'); } catch (e) { toast(e.message, 8000); }
     await storeInit();
     S.current = months().slice(-1)[0] || null;
     const h = location.hash.slice(1); S.tab = VIEWS[h] ? h : 'resumen';
     renderAll();
+    if (!window.claude && gsOn()) $('#btnLogout').style.display = '';
     capUse('downloads').then(d => S.downloads = d);
   })();
 })();
