@@ -738,7 +738,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
     const cancel = (model.R.cancelados || []).map(x => ({ fecha: x.fcancel, monto: x.monto, intereses: x.intereses, gm: x.gm }));
     const vencAge = ['Menos de 1 año', '1 a 3 años', '3 a 5 años', 'Más de 5 años'].map(k => ({ k, n: 0, saldo: 0 }));
     (model.R.vencidos || []).forEach(v => { const y = (v.diasVencido || 0) / 365; const g = vencAge[y < 1 ? 0 : y < 3 ? 1 : y < 5 ? 2 : 3]; g.n++; g.saldo = r2(g.saldo + v.saldo); });
-    const seguro = { segAge, segSex: Object.values(segSex), sinSeguroN: sinSeg.length, sinSeguroSaldo: r2(sinSeg.reduce((s, l) => s + l.saldo, 0)), saldoAsegurado: r2(sv.reduce((s, x) => s + x.saldoNeto, 0)), tarifaProm: sv.length ? sv.reduce((s, x) => s + x.tarifa, 0) / sv.length : 0, segB };
+    const seguro = { segAge, segSex: Object.values(segSex), sinSeguroSonVencidos: sinSeg.length > 0 && sinSeg.every(l => l.estado === 'Vencido' || (model.R.vencidos || []).some(v => v.id === l.id)), sinSeguroN: sinSeg.length, sinSeguroSaldo: r2(sinSeg.reduce((s, l) => s + l.saldo, 0)), saldoAsegurado: r2(sv.reduce((s, x) => s + x.saldoNeto, 0)), tarifaProm: sv.length ? sv.reduce((s, x) => s + x.tarifa, 0) / sv.length : 0, segB };
     const feci = { byStatus: Object.values(feSt), byBucket: feciB, prestamos: fe.length, feciTotal: r2(fe.reduce((s, x) => s + x.feci, 0)), devengado: r2(fe.reduce((s, x) => s + x.feciDeven, 0)) };
     return {
       seguro, feci, cancel, vencAge,
@@ -926,7 +926,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
     tableSheet(wb, 'Refinanciados', gc('Tipo'), d.byRefi.concat(d.byFreq.map(x => Object.assign({}, x, { k: 'Forma de pago: ' + x.k }))).map(gr), { title: 'Refinanciados y forma de pago', sub: agg.label });
     tableSheet(wb, 'Composición saldo', [['Tramo', 14], ['Capital', 16, ACC, 1], ['Intereses', 16, ACC, 1], ['Manejo', 16, ACC, 1], ['FECI', 16, ACC, 1], ['Seguro vida', 16, ACC, 1]], d.comp.map(c => [c.k, c.capital, c.interes, c.manejo, c.feci, c.segVida]), { total: true, title: 'Composición del saldo por rubro y tramo', sub: agg.label });
     if (d.seguro) {
-      tableSheet(wb, 'Seguro de vida', [['Edad', 16], ['Asegurados', 12, null, 1], ['Prima', 14, ACC, 1], ['Saldo asegurado', 16, ACC, 1]], d.seguro.segAge.map(x => [x.k, x.n, x.prima, x.saldo]), { total: true, title: 'Seguro de vida por edad', sub: `${agg.label} · ${d.seguro.sinSeguroN} préstamos sin seguro (${d.seguro.sinSeguroSaldo.toFixed(2)} de saldo)` });
+      tableSheet(wb, 'Seguro de vida', [['Edad', 16], ['Asegurados', 12, null, 1], ['Prima', 14, ACC, 1], ['Saldo asegurado', 16, ACC, 1]], d.seguro.segAge.map(x => [x.k, x.n, x.prima, x.saldo]), { total: true, title: 'Seguro de vida por edad', sub: `${agg.label} · ${d.seguro.sinSeguroN} préstamos no aparecen en el informe de seguro (${d.seguro.sinSeguroSaldo.toFixed(2)} de saldo)${d.seguro.sinSeguroSonVencidos ? ': son los préstamos vencidos, a los que ya no se les cobra seguro' : ''}` });
       tableSheet(wb, 'FECI', [['Tramo', 14], ['Saldo FECI', 16, ACC, 1], ['Saldo seguro vida', 16, ACC, 1]], d.feci.byBucket.map((x, i) => [x.k, x.feci, (d.seguro.segB[i] || {}).seg || 0]), { total: true, title: 'Saldo de FECI y seguro por tramo de mora', sub: `${agg.label} · FECI generado ${d.feci.feciTotal.toFixed(2)} · devengado ${d.feci.devengado.toFixed(2)}` });
       tableSheet(wb, 'Vencidos', [['Antigüedad', 18], ['Préstamos', 12, null, 1], ['Saldo', 16, ACC, 1]], (d.vencAge || []).map(x => [x.k, x.n, x.saldo]), { total: true, title: 'Préstamos vencidos por antigüedad', sub: agg.label });
     }
@@ -1046,7 +1046,8 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
     sheet('Por producto', [['Producto', 40], ['# Préstamos', 12], ['Saldo', 16, ACC], ['Moroso', 16, ACC], ['PAR30', 16, ACC], ['Cobrado', 16, ACC]], agg.byProduct.map(b => [b.k, b.n, b.saldo, b.moroso, b.par30, b.pagado]));
     sheet('Por patrono', [['Patrono', 48], ['# Préstamos', 12], ['Saldo', 16, ACC], ['Moroso', 16, ACC], ['PAR30', 16, ACC], ['Cobrado', 16, ACC]], agg.byPatrono.map(b => [b.k, b.n, b.saldo, b.moroso, b.par30, b.pagado]));
     sheet('Por oficial', [['Oficial', 20], ['# Préstamos', 12], ['Saldo', 16, ACC], ['Moroso', 16, ACC], ['Cuota mensual', 16, ACC], ['Cobrado', 16, ACC]], agg.byOficial.map(b => [b.k, b.n, b.saldo, b.moroso, b.cuotaMes, b.pagado]));
-    sheet('Meta de cobros', [['Tramo', 14], ['# Préstamos', 12], ['Cuotas del mes', 16, ACC], ['Meta cuotas', 16, ACC], ['Meta recuperación', 16, ACC], ['Meta total', 16, ACC], ['Cobrado', 16, ACC]], agg.metaRows.map(b => [b.k, b.n, b.cuotas, b.metaCuotas, b.metaRecup, b.meta, b.real]));
+    const mfm = CoreLib.metaFromAgg(agg, config && config.meta, 'mes');
+    sheet('Meta de cobros', [['Tramo', 14], ['# Préstamos', 12], ['Letras del mes', 16, ACC], ['Meta letras', 16, ACC], ['Meta recuperación', 16, ACC], ['Meta total', 16, ACC], ['Cobrado', 16, ACC]], mfm.rows.map(b => [b.k, b.n, b.cuotasMes != null ? b.cuotasMes : b.cuotas, b.metaCuotas, b.metaRecup, b.meta, b.real]));
     if (model && model.loans) {
       const meta = CoreLib.computeMeta(model.loans, config && config.meta, 'mes');
       sheet('Gestión de cobro', [['Contrato', 20], ['Cliente', 40], ['Patrono', 40], ['Oficial', 14], ['Tramo', 12], ['Días', 8], ['Cuota mensual', 14, ACC], ['Moroso', 14, ACC], ['Meta', 14, ACC], ['Cobrado', 14, ACC], ['Pendiente', 14, ACC]],
@@ -1639,7 +1640,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
       ${a.deep && a.deep.seguro ? `
       <div class="grid g-kpi mt">
         ${kpiCard('Asegurados', int(k.segAsegurados), 'saldo asegurado ' + short(a.deep.seguro.saldoAsegurado), '#f472b6')}
-        ${kpiCard('Préstamos sin seguro', int(a.deep.seguro.sinSeguroN), short(a.deep.seguro.sinSeguroSaldo) + ' de saldo', '#fb7185')}
+        ${kpiCard(a.deep.seguro.sinSeguroSonVencidos ? 'Fuera del informe de seguro' : 'Préstamos sin seguro', int(a.deep.seguro.sinSeguroN), a.deep.seguro.sinSeguroSonVencidos ? 'son los préstamos vencidos: ya no se les cobra seguro' : short(a.deep.seguro.sinSeguroSaldo) + ' de saldo', '#fb7185')}
         ${kpiCard('Seguro a pagar', short(k.segPrima * 1.05), 'prima ' + short(k.segPrima) + ' + ITBMS 5%', '#a78bfa')}
         ${kpiCard('Saldo FECI', short(k.feciSaldo), int(a.deep.feci.prestamos) + ' préstamos con FECI', '#22d3ee')}
         ${kpiCard('FECI devengado', short(a.deep.feci.devengado), 'de ' + short(a.deep.feci.feciTotal) + ' generado', '#38bdf8')}
@@ -1999,7 +2000,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Seguro de vida y FECI', a.label);
         s.addChart(pptx.ChartType.bar, [{ name: 'Prima', labels: sa.map(x => x.k), values: sa.map(x => +x.prima.toFixed(2)) }], { x: 0.5, y: 1.2, w: 6.1, h: 5.4, barDir: 'col', chartColors: ['DB2777'], showValue: true, dataLabelFormatCode: '$#,##0', valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: `Seguro de vida · prima ${money0(k.segPrima)} · ${k.segAsegurados} asegurados`, titleFontSize: 12 });
         s.addChart(pptx.ChartType.bar, [{ name: 'Saldo FECI', labels: fb.map(x => x.k), values: fb.map(x => Math.round(x.feci)) }], { x: 6.8, y: 1.2, w: 6.1, h: 5.4, barDir: 'col', chartColors: ['0891B2'], showValue: true, dataLabelFormatCode: '$#,##0', valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: `FECI · saldo ${money0(k.feciSaldo)} · pagos del mes ${money0(k.feciPagosMes)}`, titleFontSize: 12 });
-        s.addText(`Préstamos sin seguro de vida: ${a.deep.seguro.sinSeguroN} (${money0(a.deep.seguro.sinSeguroSaldo)})   ·   Seguro a pagar con ITBMS: ${money0(k.segPrima * 1.05)}`, { x: 0.5, y: 6.65, w: 12.3, h: 0.35, fontSize: 12, color: BLUE, bold: true });
+        s.addText(`${a.deep.seguro.sinSeguroSonVencidos ? 'Fuera del informe de seguro (préstamos vencidos)' : 'Préstamos sin seguro de vida'}: ${a.deep.seguro.sinSeguroN} (${money0(a.deep.seguro.sinSeguroSaldo)})   ·   Seguro a pagar con ITBMS: ${money0(k.segPrima * 1.05)}`, { x: 0.5, y: 6.65, w: 12.3, h: 0.35, fontSize: 12, color: BLUE, bold: true });
       }
       {
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Ingresos del mes', a.label);

@@ -523,7 +523,7 @@
     const cancel = (model.R.cancelados || []).map(x => ({ fecha: x.fcancel, monto: x.monto, intereses: x.intereses, gm: x.gm }));
     const vencAge = ['Menos de 1 año', '1 a 3 años', '3 a 5 años', 'Más de 5 años'].map(k => ({ k, n: 0, saldo: 0 }));
     (model.R.vencidos || []).forEach(v => { const y = (v.diasVencido || 0) / 365; const g = vencAge[y < 1 ? 0 : y < 3 ? 1 : y < 5 ? 2 : 3]; g.n++; g.saldo = r2(g.saldo + v.saldo); });
-    const seguro = { segAge, segSex: Object.values(segSex), sinSeguroN: sinSeg.length, sinSeguroSaldo: r2(sinSeg.reduce((s, l) => s + l.saldo, 0)), saldoAsegurado: r2(sv.reduce((s, x) => s + x.saldoNeto, 0)), tarifaProm: sv.length ? sv.reduce((s, x) => s + x.tarifa, 0) / sv.length : 0, segB };
+    const seguro = { segAge, segSex: Object.values(segSex), sinSeguroSonVencidos: sinSeg.length > 0 && sinSeg.every(l => l.estado === 'Vencido' || (model.R.vencidos || []).some(v => v.id === l.id)), sinSeguroN: sinSeg.length, sinSeguroSaldo: r2(sinSeg.reduce((s, l) => s + l.saldo, 0)), saldoAsegurado: r2(sv.reduce((s, x) => s + x.saldoNeto, 0)), tarifaProm: sv.length ? sv.reduce((s, x) => s + x.tarifa, 0) / sv.length : 0, segB };
     const feci = { byStatus: Object.values(feSt), byBucket: feciB, prestamos: fe.length, feciTotal: r2(fe.reduce((s, x) => s + x.feci, 0)), devengado: r2(fe.reduce((s, x) => s + x.feciDeven, 0)) };
     return {
       seguro, feci, cancel, vencAge,

@@ -573,7 +573,7 @@
       ${a.deep && a.deep.seguro ? `
       <div class="grid g-kpi mt">
         ${kpiCard('Asegurados', int(k.segAsegurados), 'saldo asegurado ' + short(a.deep.seguro.saldoAsegurado), '#f472b6')}
-        ${kpiCard('Préstamos sin seguro', int(a.deep.seguro.sinSeguroN), short(a.deep.seguro.sinSeguroSaldo) + ' de saldo', '#fb7185')}
+        ${kpiCard(a.deep.seguro.sinSeguroSonVencidos ? 'Fuera del informe de seguro' : 'Préstamos sin seguro', int(a.deep.seguro.sinSeguroN), a.deep.seguro.sinSeguroSonVencidos ? 'son los préstamos vencidos: ya no se les cobra seguro' : short(a.deep.seguro.sinSeguroSaldo) + ' de saldo', '#fb7185')}
         ${kpiCard('Seguro a pagar', short(k.segPrima * 1.05), 'prima ' + short(k.segPrima) + ' + ITBMS 5%', '#a78bfa')}
         ${kpiCard('Saldo FECI', short(k.feciSaldo), int(a.deep.feci.prestamos) + ' préstamos con FECI', '#22d3ee')}
         ${kpiCard('FECI devengado', short(a.deep.feci.devengado), 'de ' + short(a.deep.feci.feciTotal) + ' generado', '#38bdf8')}
@@ -933,7 +933,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Seguro de vida y FECI', a.label);
         s.addChart(pptx.ChartType.bar, [{ name: 'Prima', labels: sa.map(x => x.k), values: sa.map(x => +x.prima.toFixed(2)) }], { x: 0.5, y: 1.2, w: 6.1, h: 5.4, barDir: 'col', chartColors: ['DB2777'], showValue: true, dataLabelFormatCode: '$#,##0', valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: `Seguro de vida · prima ${money0(k.segPrima)} · ${k.segAsegurados} asegurados`, titleFontSize: 12 });
         s.addChart(pptx.ChartType.bar, [{ name: 'Saldo FECI', labels: fb.map(x => x.k), values: fb.map(x => Math.round(x.feci)) }], { x: 6.8, y: 1.2, w: 6.1, h: 5.4, barDir: 'col', chartColors: ['0891B2'], showValue: true, dataLabelFormatCode: '$#,##0', valAxisLabelFormatCode: '$#,##0', showLegend: false, showTitle: true, title: `FECI · saldo ${money0(k.feciSaldo)} · pagos del mes ${money0(k.feciPagosMes)}`, titleFontSize: 12 });
-        s.addText(`Préstamos sin seguro de vida: ${a.deep.seguro.sinSeguroN} (${money0(a.deep.seguro.sinSeguroSaldo)})   ·   Seguro a pagar con ITBMS: ${money0(k.segPrima * 1.05)}`, { x: 0.5, y: 6.65, w: 12.3, h: 0.35, fontSize: 12, color: BLUE, bold: true });
+        s.addText(`${a.deep.seguro.sinSeguroSonVencidos ? 'Fuera del informe de seguro (préstamos vencidos)' : 'Préstamos sin seguro de vida'}: ${a.deep.seguro.sinSeguroN} (${money0(a.deep.seguro.sinSeguroSaldo)})   ·   Seguro a pagar con ITBMS: ${money0(k.segPrima * 1.05)}`, { x: 0.5, y: 6.65, w: 12.3, h: 0.35, fontSize: 12, color: BLUE, bold: true });
       }
       {
         s = pptx.addSlide({ masterName: 'M' }); title(s, 'Ingresos del mes', a.label);
