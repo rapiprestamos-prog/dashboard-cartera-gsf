@@ -1,0 +1,7 @@
+node_modules/
+*.xls
+*.XLS
+*.xlsx
+*.pptx
+*.json
+test.html

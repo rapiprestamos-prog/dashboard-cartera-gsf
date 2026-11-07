@@ -1,0 +1,37 @@
+<div class="bgfx"></div><div class="floor"></div>
+<header class="top">
+  <div class="wrap">
+    <div class="topin">
+      <div class="brand">
+        <div class="cube"><div class="c"><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div></div></div>
+        <div style="min-width:0"><h1>Cartera GSF · Dashboard</h1><small id="subtitle">Grupo de Servicios Financieros</small></div>
+      </div>
+      <select id="monthSel" class="sel" aria-label="Mes"></select>
+      <button class="btn pri" id="btnUpload" title="Cargar reportes del mes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg><span class="hide-sm">Cargar mes</span></button>
+      <input type="file" id="fileIn" multiple accept=".xls,.xlsx,.XLS,.XLSX" hidden>
+    </div>
+    <nav class="tabs" id="tabs">
+      <a href="#resumen" data-v="resumen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/></svg>Resumen</a>
+      <a href="#morosidad" data-v="morosidad"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>Morosidad</a>
+      <a href="#meta" data-v="meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>Meta de cobros</a>
+      <a href="#ingresos" data-v="ingresos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Ingresos</a>
+      <a href="#excel" data-v="excel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13l4 5M12 13l-4 5"/></svg>Excel GSF</a>
+      <a href="#presentacion" data-v="presentacion"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h20v13H2zM8 21l4-5 4 5"/></svg>Presentación</a>
+      <a href="#reportes" data-v="reportes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Ver reportes</a>
+      <a href="#cargar" data-v="cargar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg>Cargar / historial</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+  <div id="seedbar"></div>
+  <section class="view" id="v-resumen"></section>
+  <section class="view" id="v-morosidad"></section>
+  <section class="view" id="v-meta"></section>
+  <section class="view" id="v-ingresos"></section>
+  <section class="view" id="v-excel"></section>
+  <section class="view" id="v-presentacion"></section>
+  <section class="view" id="v-reportes"></section>
+  <section class="view" id="v-cargar"></section>
+</main>
+<div class="toast" id="toast"></div>
+<div class="loader" id="loader"><div class="card box"><div class="spin"></div><div id="loaderTx" style="text-align:center;font-weight:600">Procesando…</div><div class="prog mt"><i id="loaderBar" style="width:0%"></i></div></div></div>
