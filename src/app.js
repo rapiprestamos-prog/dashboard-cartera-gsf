@@ -69,6 +69,17 @@
     const buf = new Uint8Array(await new Response(cs).arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     return 'gz:' + btoa(bin);
   }
+  async function gzipBytes(u8) {
+    if (typeof CompressionStream === 'undefined') { let b = ''; for (let i = 0; i < u8.length; i += 0x8000) b += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return 'b64:' + btoa(b); }
+    const cs = new Blob([u8]).stream().pipeThrough(new CompressionStream('gzip'));
+    const buf = new Uint8Array(await new Response(cs).arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return 'gz:' + btoa(bin);
+  }
+  async function gunzipBytes(s) {
+    const bin = atob(s.slice(s.startsWith('b64:') ? 4 : 3)); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    if (s.startsWith('b64:')) return u.buffer;
+    return await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  }
   async function gunzip(s) {
     if (!s) return null; if (s.startsWith('raw:')) return s.slice(4);
     const bin = atob(s.slice(3)); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
@@ -79,9 +90,13 @@
   function clientesRows(md) {
     return md.loans.map(l => [l.id, l.nombre, l.cedula, String(l.sucursal).replace(/^\d+\s+/, ''), l.producto, l.patrono, l.oficial, l.clas, l.dias, l.monto, l.saldo, l.corriente, l.totalMoroso, l.letra, C.freqName(l.freq), l.letrasMes || 0, l.letrasSig || 0, l.pagadoMes, l.fprest || '', l.fini || '', l.fvenc || '', C.validDate(l.fult) || '', l.estado]);
   }
-  async function gsSaveMonth(ag, md) {
+  async function gsSaveMonth(ag, md, reps) {
     const body = { action: 'saveMonth', agg: ag };
-    if (gsCfg().detalle && md) { body.modelo = await gzip(JSON.stringify(modelLite(md))); body.clientes = clientesRows(md); }
+    if (gsCfg().detalle && md) {
+      body.modelo = await gzip(JSON.stringify(modelLite(md))); body.clientes = clientesRows(md);
+      const conRaw = (reps || []).filter(r => r.raw);
+      if (conRaw.length) body.archivos = await Promise.all(conRaw.map(async r => ({ nombre: r.filename, data: await gzipBytes(new Uint8Array(r.raw)) })));
+    }
     await gsPost(body); S.gsDetalle[ag.month] = !!body.modelo;
   }
   async function gsLoadModel(ym) {
@@ -124,9 +139,9 @@
       else if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('config').set(body); } catch (e) { } }
     }, 700);
   }
-  async function saveMonth(agg, md) {
+  async function saveMonth(agg, md, reps) {
     const all = Object.assign({}, LS.get('history') || {}); all[agg.month] = agg; LS.set('history', all);
-    if (gsOn()) { try { loader(true, 'Guardando en Google Sheets…', 95); await gsSaveMonth(agg, md); return 'sheets'; } catch (e) { toast('No se pudo guardar en Google Sheets: ' + e.message + '. Quedó en este navegador.', 7000); return false; } }
+    if (gsOn()) { try { loader(true, 'Guardando en Google Sheets…', 95); await gsSaveMonth(agg, md, reps); return 'sheets'; } catch (e) { toast('No se pudo guardar en Google Sheets: ' + e.message + '. Quedó en este navegador.', 7000); return false; } }
     if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('m' + agg.month.replace('-', '')).set(agg); return true; } catch (e) { toast('Guardado solo en este navegador (' + (e.code || 'error') + ').'); } }
     return false;
   }
@@ -1025,14 +1040,42 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   }
 
   // ---------- VER REPORTES ----------
+  const origLoading = {};
+  async function loadOriginals(ym) {
+    const { archivos } = await gsPost({ action: 'getFiles', month: ym });
+    const out = [];
+    for (const a of archivos || []) {
+      const buf = await gunzipBytes(a.data);
+      let rp; try { rp = C.readReport(buf, a.nombre); } catch (e) { rp = { key: null, filename: a.nombre, name: a.nombre, meta: {}, aoa: [], rows: [] }; }
+      rp.raw = buf; out.push(rp);
+    }
+    return out;
+  }
   function renderReportes() {
-    const v = $('#v-reportes'); const reps = reports();
-    v.innerHTML = `<div class="vhead"><div><h2>Ver reportes</h2><p>Los Excel tal como vienen del SIF. Ábrelos solo si quieres revisar el original; el dashboard ya los tiene leídos.</p></div></div>
-      ${reps.length ? `<div class="replist" id="repList">${reps.map((r, i) => `<div class="rep ${r.key ? 'ok' : ''}"><span class="dot"></span><div class="nm"><b title="${esc(r.filename)}">${esc(r.name)}</b><span>${int(r.rows.length)} filas de detalle · ${esc(r.filename.replace(/^[0-9a-f]{8}-/, ''))}</span></div><button class="btn sm" data-i="${i}">Ver</button></div>`).join('')}</div><div class="card mt" id="repView" style="display:none"></div>` : `<div class="card">${needDetail('Aquí puedes abrir cada Excel original.')}</div>`}`;
-    $$('#repList button').forEach(b => b.onclick = () => {
+    const v = $('#v-reportes'); const ym = S.current;
+    let reps = reports(); if (!reps.length && S.orig && S.orig[ym]) reps = S.orig[ym];
+    const yaTraidos = !!(S.orig && S.orig[ym]);
+    const canFetch = !reps.length && !yaTraidos && ym && gsOn() && S.gsDetalle[ym] && puede('getFiles');
+    const fileName = r => r.filename.replace(/^[0-9a-f]{8}-/, '');
+    const conRaw = reps.filter(r => r.raw);
+    v.innerHTML = `<div class="vhead"><div><h2>Ver reportes</h2><p>Los Excel tal como vienen del SIF. Puedes verlos aquí o descargar el archivo original otra vez.</p></div>${conRaw.length && puede('descargar') ? `<div class="tools" style="margin:0"><button class="btn pri" id="repAll"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>Descargar todos (${conRaw.length})</button></div>` : ''}</div>
+      ${reps.length ? `<div class="replist" id="repList">${reps.map((r, i) => `<div class="rep ${r.key ? 'ok' : ''}"><span class="dot"></span><div class="nm"><b title="${esc(fileName(r))}">${esc(r.name)}</b><span>${int(r.rows.length)} filas de detalle · ${esc(fileName(r))}</span></div><div style="display:flex;gap:6px">${r.raw && puede('descargar') ? `<button class="btn sm ghost" data-dl="${i}" title="Descargar el archivo original">Descargar</button>` : ''}<button class="btn sm" data-i="${i}">Ver</button></div></div>`).join('')}</div><div class="card mt" id="repView" style="display:none"></div>`
+        : canFetch ? `<div class="card"><div class="muted">Trayendo los reportes originales de ${esc(C.monthLabel(ym))} desde Google Sheets…</div></div>`
+        : yaTraidos ? '<div class="card"><div class="muted">Este mes se guardó antes de que el dashboard conservara los reportes originales. Vuelve a cargar sus reportes una vez y quedarán guardados para descargarlos cuando quieras.</div></div>'
+        : `<div class="card">${S.gsDetalle[ym] && gsOn() && !puede('getFiles') ? '<div class="muted">Tu rol no permite ver ni descargar los reportes originales.</div>' : needDetail('Aquí puedes abrir y descargar cada Excel original. Los meses guardados en Google Sheets con detalle conservan los originales desde que se cargan.')}</div>`}`;
+    if (canFetch && !origLoading[ym]) {
+      origLoading[ym] = true;
+      loadOriginals(ym).then(list => { S.orig = S.orig || {}; S.orig[ym] = list; if (S.current === ym && S.tab === 'reportes') renderReportes(); })
+        .catch(e => toast('No se pudieron traer los reportes: ' + e.message, 6000)).finally(() => { origLoading[ym] = false; });
+      return;
+    }
+    const dlOne = r => saveFile(fileName(r), new Blob([r.raw], { type: 'application/vnd.ms-excel' }));
+    $$('[data-dl]', v).forEach(b => b.onclick = () => dlOne(reps[+b.dataset.dl]));
+    $('#repAll') && ($('#repAll').onclick = async () => { for (const r of conRaw) { await dlOne(r); await new Promise(x => setTimeout(x, 450)); } });
+    $$('#repList button[data-i]').forEach(b => b.onclick = () => {
       const r = reps[+b.dataset.i]; const box = $('#repView');
       if (box.dataset.i === b.dataset.i && box.style.display !== 'none') { box.style.display = 'none'; b.textContent = 'Ver'; return; }
-      $$('#repList button').forEach(x => x.textContent = 'Ver'); b.textContent = 'Ocultar';
+      $$('#repList button[data-i]').forEach(x => x.textContent = 'Ver'); b.textContent = 'Ocultar';
       box.dataset.i = b.dataset.i; box.style.display = 'block';
       const aoa = r.aoa.filter(row => row && row.some(x => x != null && x !== ''));
       const width = Math.max(...aoa.slice(0, 200).map(x => x.length));
@@ -1127,7 +1170,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
     $('#gsPush') && ($('#gsPush').onclick = async () => {
       const ms = months(); let n = 0;
-      try { for (const m of ms) { loader(true, `Subiendo ${C.monthLabel(m)} a Google Sheets…`, Math.round(100 * n / ms.length)); await gsSaveMonth(S.history[m], S.models[m] && !S.models[m].fromSheets ? S.models[m].model : null); n++; } loader(false); toast(`${n} meses subidos a Google Sheets`); renderAll(); }
+      try { for (const m of ms) { loader(true, `Subiendo ${C.monthLabel(m)} a Google Sheets…`, Math.round(100 * n / ms.length)); await gsSaveMonth(S.history[m], S.models[m] && !S.models[m].fromSheets ? S.models[m].model : null, S.models[m] && S.models[m].reports); n++; } loader(false); toast(`${n} meses subidos a Google Sheets`); renderAll(); }
       catch (e) { loader(false); toast('Error al subir: ' + e.message, 6000); }
     });
     const code = () => window.__APPS_SCRIPT__ || '';
@@ -1152,7 +1195,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         loader(true, `Leyendo ${i + 1} de ${files.length}: ${files[i].name.slice(0, 40)}`, 5 + 80 * i / files.length);
         const buf = await files[i].arrayBuffer();
         await new Promise(r => setTimeout(r, 10));
-        try { out.push(C.readReport(buf, files[i].name)); } catch (e) { console.error(e); out.push({ key: null, filename: files[i].name, name: 'No se pudo leer', meta: {}, aoa: [], rows: [] }); }
+        try { const rp = C.readReport(buf, files[i].name); rp.raw = buf; out.push(rp); } catch (e) { console.error(e); out.push({ key: null, filename: files[i].name, name: 'No se pudo leer', meta: {}, aoa: [], rows: [] }); }
       }
       const known = out.filter(r => r.key);
       if (!known.length) { loader(false); toast('No reconocí ningún reporte del SIF en esos archivos.', 5000); return; }
@@ -1169,7 +1212,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       try { const rc = C.reconcile(merged.filter(r => r.key), md, ag); ag.cuadre = { total: rc.length, ok: rc.filter(x => x.ok).length, explicadas: rc.filter(x => !x.ok && x.nota).length }; } catch (e) { console.error(e); }
       S.models[month] = { model: md, reports: merged };
       S.history[month] = ag; S.current = month;
-      const saved = await saveMonth(ag, md);
+      const saved = await saveMonth(ag, md, merged);
       loader(false);
       const unk = out.filter(r => !r.key).length;
       const cq = ag.cuadre; toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}.${cq ? ` Cuadre: ${cq.ok} de ${cq.total} exactos${cq.total - cq.ok - cq.explicadas ? `, ${cq.total - cq.ok - cq.explicadas} por revisar` : ''}.` : ''}${saved === 'sheets' ? ' Guardado en Google Sheets' + (gsCfg().detalle ? ' con detalle.' : '.') : ''}`, 7000);

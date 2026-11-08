@@ -26,13 +26,14 @@ var COLS_USUARIOS = ['usuario', 'nombre', 'salt', 'hash', 'activo', 'esAdmin', '
    consulta  → solo ve los totales y gráficas del historial (sin detalle por cliente ni descargas) */
 var ROLES = ['admin', 'gerencia', 'analista', 'consulta'];
 var PERMISOS = {
-  admin: ['list', 'getModel', 'getConfig', 'saveMonth', 'deleteMonth', 'saveConfig'],
-  gerencia: ['list', 'getModel', 'getConfig', 'saveMonth', 'deleteMonth', 'saveConfig'],
-  analista: ['list', 'getModel', 'getConfig', 'saveMonth'],
+  admin: ['list', 'getModel', 'getFiles', 'getConfig', 'saveMonth', 'deleteMonth', 'saveConfig'],
+  gerencia: ['list', 'getModel', 'getFiles', 'getConfig', 'saveMonth', 'deleteMonth', 'saveConfig'],
+  analista: ['list', 'getModel', 'getFiles', 'getConfig', 'saveMonth'],
   consulta: ['list', 'getConfig']
 };
 function rolDe_(u) { return u.esAdmin === 'TRUE' ? 'admin' : (ROLES.indexOf(u.rol) > 0 ? u.rol : 'consulta'); }
 var COLS_SESIONES = ['huella', 'usuario', 'creado', 'ultimo', 'vence'];
+var COLS_ARCHIVOS = ['Mes', 'Archivo', 'Parte', 'Datos']; // reportes originales del SIF (comprimidos) para volver a descargarlos
 
 function libro_() { return HOJA_ID ? SpreadsheetApp.openById(HOJA_ID) : SpreadsheetApp.getActiveSpreadsheet(); }
 function sha_(s) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8).map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join(''); }
@@ -121,6 +122,7 @@ var PRIVADAS = {
   ping: function (b, me) { return { hoja: libro_().getName(), me: publico_(me) }; },
   list: function () { return { meses: listar_() }; },
   getModel: function (b) { return { data: leerModelo_(b.month) }; },
+  getFiles: function (b) { return { archivos: leerArchivos_(b.month) }; },
   getConfig: function () { return { config: leerConfig_() }; },
   saveMonth: function (b) { return { guardado: guardarMes_(b) }; },
   deleteMonth: function (b) { borrarMes_(b.month); return { ok: true }; },
@@ -210,9 +212,9 @@ function onOpen() {
 function aviso_(t, m) { try { SpreadsheetApp.getUi().alert(t, m, SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) { } console.log(t + ': ' + m); }
 function instalar() {
   hoja_('Meses', COLS_MESES); hoja_('Clientes', COLS_CLIENTES); hoja_('Modelo', ['Mes', 'Parte', 'Datos']); hoja_('Config', ['Clave', 'Valor']);
-  hoja_('Usuarios', COLS_USUARIOS); hoja_('Sesiones', COLS_SESIONES);
+  hoja_('Usuarios', COLS_USUARIOS); hoja_('Sesiones', COLS_SESIONES); hoja_('Archivos', COLS_ARCHIVOS);
   var ss = libro_(), def = ss.getSheetByName('Hoja 1') || ss.getSheetByName('Sheet1');
-  if (def && ss.getSheets().length > 6) ss.deleteSheet(def);
+  if (def && ss.getSheets().length > 7) ss.deleteSheet(def);
   aviso_('Dashboard cartera', 'Listo: pestañas creadas.\n\nAhora publica el script (Implementar → Nueva implementación → Aplicación web, Ejecutar como: Yo, Acceso: Cualquier usuario) y pega la URL en index.html. ' +
     'La primera vez que abras la página te pedirá crear la cuenta de administración.');
 }
@@ -259,6 +261,12 @@ function guardarMes_(b) {
   sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setValues([fila]);
   const sc = hoja_('Clientes', COLS_CLIENTES); borrarFilasRapido_(sc, mes);
   const sm = hoja_('Modelo', ['Mes', 'Parte', 'Datos']); borrarFilasRapido_(sm, mes);
+  const sa = hoja_('Archivos', COLS_ARCHIVOS); borrarFilasRapido_(sa, mes);
+  if (b.modelo && b.archivos && b.archivos.length) {
+    const filas = [];
+    b.archivos.forEach(a => partes_(String(a.data || '')).forEach((p, i) => filas.push([mes, String(a.nombre || 'reporte.xls').slice(0, 200), i + 1, p])));
+    sa.getRange(sa.getLastRow() + 1, 1, filas.length, 4).setNumberFormat('@').setValues(filas);
+  }
   if (b.modelo) {
     const ps = partes_(b.modelo);
     sm.getRange(sm.getLastRow() + 1, 1, ps.length, 3).setNumberFormat('@').setValues(ps.map((p, i) => [mes, i + 1, p]));
@@ -285,8 +293,16 @@ function leerModelo_(mes) {
   const vals = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues().filter(r => String(r[0]) === String(mes)).sort((a, b) => a[1] - b[1]);
   return vals.length ? vals.map(r => r[2]).join('') : null;
 }
+function leerArchivos_(mes) {
+  const sh = libro_().getSheetByName('Archivos'); if (!sh || sh.getLastRow() < 2) return [];
+  const por = {}, orden = [];
+  sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues().filter(r => String(r[0]) === String(mes)).forEach(r => {
+    const n = String(r[1]); if (!por[n]) { por[n] = []; orden.push(n); } por[n].push([Number(r[2]), String(r[3])]);
+  });
+  return orden.map(n => ({ nombre: n, data: por[n].sort((a, b) => a[0] - b[0]).map(x => x[1]).join('') }));
+}
 function borrarMes_(mes) {
-  ['Meses', 'Clientes', 'Modelo'].forEach(n => { const sh = libro_().getSheetByName(n); if (sh) (n === 'Meses' ? borrarFilas_ : borrarFilasRapido_)(sh, String(mes)); });
+  ['Meses', 'Clientes', 'Modelo', 'Archivos'].forEach(n => { const sh = libro_().getSheetByName(n); if (sh) (n === 'Meses' ? borrarFilas_ : borrarFilasRapido_)(sh, String(mes)); });
 }
 function leerConfig_() {
   const sh = libro_().getSheetByName('Config'); if (!sh || sh.getLastRow() < 2) return null;

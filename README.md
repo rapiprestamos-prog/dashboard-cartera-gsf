@@ -55,6 +55,8 @@ Instalación (cuenta de Google proyectosrapiprestamos):
 5. Pega la URL en `index.html`, donde dice `PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT` (o reconstruye con `GS_URL="https://script.google.com/macros/s/…/exec" python3 build.py`).
 6. La primera vez que abras la página te pide **crear la cuenta de administración**. Desde Cargar / historial → **Usuarios** puedes dar acceso a otras personas con una contraseña temporal (se les pide cambiarla al entrar).
 
+Reportes originales: cuando se guarda el detalle, los Excel del SIF se guardan comprimidos en la hoja Archivos (unos 500 KB por mes) y se pueden volver a ver o descargar en **Ver reportes**, también desde otro equipo.
+
 Jerarquía de roles (Cargar / historial → **Usuarios y jerarquía**; cada persona tiene un rol y a quién reporta):
 
 | Rol | Puede |
