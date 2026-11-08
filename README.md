@@ -68,6 +68,8 @@ Jerarquía de roles (Cargar / historial → **Usuarios y jerarquía**; cada pers
 
 Los permisos los aplica el Apps Script, no solo la página.
 
+Registro con aprobación: en la pantalla de ingreso cualquiera puede tocar **Solicitar acceso** (nombre, correo, usuario y contraseña). La solicitud queda pendiente; a Administración le llega un correo y la aprueba o rechaza en la pestaña **Usuarios** (eligiendo rol y a quién reporta). A la persona le llega un correo con el resultado. Los correos salen de la cuenta dueña del Apps Script (MailApp, hasta 100 al día en cuentas gratuitas).
+
 Si alguien olvida su contraseña: menú **Dashboard cartera → Permitir que un usuario cree una contraseña nueva**. Si cambias el código del Apps Script, usa Implementar → Administrar implementaciones → Editar → Nueva versión para que la URL no cambie.
 
 Tamaño: con detalle, cada mes ocupa unos 130 KB comprimidos en la hoja Modelo y 271 filas en Clientes.

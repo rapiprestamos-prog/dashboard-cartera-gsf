@@ -54,7 +54,7 @@
   const ROL_NOMBRE = { admin: 'Administración', gerencia: 'Gerencia', analista: 'Analista', consulta: 'Consulta' };
   // Qué puede hacer el usuario conectado (dentro de Claude o sin Sheets: todo)
   const puede = acc => { const g = gsCfg(); if (window.claude || !gsOn() || !g.me || !g.me.permisos) return true; return acc === 'usuarios' ? g.me.rol === 'admin' : acc === 'descargar' ? g.me.permisos.indexOf('getModel') >= 0 : g.me.permisos.indexOf(acc) >= 0; };
-  function aplicarPermisos() { const tu = document.getElementById('tabUsuarios'); if (tu) tu.style.display = !window.claude && gsOn() && puede('usuarios') ? '' : 'none'; document.body.classList.toggle('sin-carga', !puede('saveMonth')); document.body.classList.toggle('sin-descarga', !puede('descargar')); }
+  function aplicarPermisos() { const tu = document.getElementById('tabUsuarios'); if (tu) { tu.style.display = !window.claude && gsOn() && puede('usuarios') ? '' : 'none'; const bd = tu.querySelector('.badge'); if (bd) bd.remove(); if (S.pendientes) tu.insertAdjacentHTML('beforeend', `<span class="badge" style="margin-left:6px;background:#f59e0b;color:#111;border-radius:99px;padding:0 7px;font-size:11px;font-weight:700">${S.pendientes}</span>`); } document.body.classList.toggle('sin-carga', !puede('saveMonth')); document.body.classList.toggle('sin-descarga', !puede('descargar')); }
   async function gsCall(body, ms) {
     const g = gsCfg();
     const r = await withTimeout(fetch(g.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({}, body, { token: g.token })) }), ms || 120000);
@@ -1098,31 +1098,51 @@ async function renderUsuarios() {
   const box = $('#gsUsersBox');
   {
     try {
-      const { usuarios } = await gsCall({ action: 'listUsers' }, 60000); if (seq !== usersSeq) return;
+      const { usuarios: todos } = await gsCall({ action: 'listUsers' }, 60000); if (seq !== usersSeq) return;
+      const pend = todos.filter(u => u.estado === 'pendiente'), usuarios = todos.filter(u => u.estado !== 'pendiente' && u.estado !== 'rechazado'), rech = todos.filter(u => u.estado === 'rechazado');
+      S.pendientes = pend.length; aplicarPermisos();
+      const APP = location.origin + location.pathname;
       const me = gsCfg().me.usuario, opRol = sel => Object.keys(ROL_NOMBRE).map(r => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROL_NOMBRE[r]}</option>`).join('');
       const opJefe = (sel, yo) => '<option value="">— nadie —</option>' + usuarios.filter(u => u.usuario !== yo).map(u => `<option value="${esc(u.usuario)}" ${u.usuario === sel ? 'selected' : ''}>${esc(u.nombre || u.usuario)}</option>`).join('');
       // árbol de la jerarquía (a quién reporta cada persona)
       const hijos = j => usuarios.filter(u => (u.jefe || '') === j || (j === '' && u.jefe && !usuarios.some(x => x.usuario === u.jefe)));
       const arbol = (j, d) => hijos(j).map(u => `<div style="padding:5px 0 5px ${d * 22}px;${u.activo ? '' : 'opacity:.45'}">${d ? '└ ' : ''}<b>${esc(u.nombre || u.usuario)}</b> <span class="muted">· ${ROL_NOMBRE[u.rol]}</span></div>` + (d < 10 ? arbol(u.usuario, d + 1) : '')).join('');
-      box.innerHTML = `<div class="grid g2" style="gap:14px;align-items:start">
+      const fecha = x => x ? new Date(x).toLocaleDateString('es-PA', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+      const pendHtml = `<div class="card" style="padding:14px;margin-bottom:14px;${pend.length ? 'border-color:#f59e0b' : ''}"><h3 style="margin:0 0 8px">Solicitudes de acceso ${pend.length ? `<span class="chip down">${pend.length} pendiente${pend.length > 1 ? 's' : ''}</span>` : ''}</h3>
+        ${pend.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Nombre</th><th>Usuario</th><th>Correo</th><th>Fecha</th><th>Rol</th><th>Reporta a</th><th></th></tr></thead><tbody>${pend.map(u => `<tr><td><b>${esc(u.nombre)}</b></td><td>${esc(u.usuario)}</td><td>${esc(u.email)}</td><td>${fecha(u.creado)}</td>
+          <td><select class="inp" style="padding:4px 8px" data-prol="${esc(u.usuario)}">${opRol('consulta')}</select></td><td><select class="inp" style="padding:4px 8px" data-pjefe="${esc(u.usuario)}">${opJefe(me, u.usuario)}</select></td>
+          <td class="right" style="white-space:nowrap"><button class="btn pri sm" data-ok="${esc(u.usuario)}">Aprobar</button> <button class="btn sm ghost" data-no="${esc(u.usuario)}">Rechazar</button></td></tr>`).join('')}</tbody></table></div><div class="note">Al aprobar o rechazar, a la persona le llega un correo.</div>`
+          : '<div class="muted">No hay solicitudes pendientes. Las personas piden acceso desde la pantalla de ingreso con "Solicitar acceso".</div>'}
+        ${rech.length ? `<details class="mt"><summary class="muted" style="cursor:pointer">${rech.length} rechazada${rech.length > 1 ? 's' : ''}</summary><div class="note">${rech.map(u => `${esc(u.nombre)} (${esc(u.usuario)}, ${esc(u.email)}) <button class="btn sm ghost" data-ok="${esc(u.usuario)}">Aprobar de todos modos</button>`).join('<br>')}</div></details>` : ''}</div>`;
+      box.innerHTML = pendHtml + `<div class="grid g2" style="gap:14px;align-items:start">
           <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Jerarquía</h3>${arbol('', 0) || '<div class="muted">Sin usuarios</div>'}</div>
           <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Qué puede hacer cada rol</h3><div class="note" style="line-height:1.7">
             <b>Administración:</b> todo, más crear usuarios y asignar roles.<br><b>Gerencia:</b> ver todo, cargar y borrar meses, cambiar los supuestos de la meta, descargar Excel y presentaciones.<br><b>Analista:</b> ver todo, cargar meses y descargar. No borra meses ni cambia supuestos.<br><b>Consulta:</b> solo totales y gráficas del historial, sin detalle por cliente ni descargas.</div></div></div>
-        <div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Reporta a</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td>
+        <div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Reporta a</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td><td><input class="inp" style="padding:4px 8px;min-width:170px" type="email" placeholder="sin correo" value="${esc(u.email)}" data-mail="${esc(u.usuario)}"></td>
           <td>${u.usuario === me ? ROL_NOMBRE[u.rol] : `<select class="inp" style="padding:4px 8px" data-rol="${esc(u.usuario)}">${opRol(u.rol)}</select>`}</td>
           <td><select class="inp" style="padding:4px 8px" data-jefe="${esc(u.usuario)}">${opJefe(u.jefe, u.usuario)}</select></td>
           <td>${u.activo ? '<span class="chip up">activo</span>' : '<span class="chip down">inactivo</span>'}</td>
           <td class="right">${u.usuario === me ? '' : `<button class="btn sm ghost" data-act="${esc(u.usuario)}" data-on="${u.activo ? 0 : 1}">${u.activo ? 'Desactivar' : 'Activar'}</button>`}</td></tr>`).join('')}</tbody></table></div>
         <form id="nuF" class="mt" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
-          <input class="inp" id="nuU" placeholder="usuario" autocomplete="off" autocapitalize="none"><input class="inp" id="nuN" placeholder="Nombre">
+          <input class="inp" id="nuU" placeholder="usuario" autocomplete="off" autocapitalize="none"><input class="inp" id="nuN" placeholder="Nombre"><input class="inp" id="nuE" type="email" placeholder="Correo (opcional)" autocapitalize="none">
           <select class="inp" id="nuR">${opRol('consulta')}</select><select class="inp" id="nuJ">${opJefe(me, '')}</select>
           <input class="inp" id="nuP" type="password" placeholder="Contraseña temporal" autocomplete="new-password"><button class="btn pri sm" type="submit">Agregar usuario</button></form>
         <div class="note">La persona entra con la contraseña temporal y el sistema le pide cambiarla.</div>`;
       const upd = async (body, msg) => { try { await gsPost(Object.assign({ action: 'updateUser' }, body)); toast(msg); } catch (e) { toast(e.message, 5000); } renderUsuarios(); };
       $$('[data-rol]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.rol, rol: x.value }, 'Rol actualizado'));
       $$('[data-jefe]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.jefe, jefe: x.value }, 'Jerarquía actualizada'));
+      $$('[data-mail]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.mail, email: x.value.trim() }, 'Correo actualizado'));
+      $$('[data-ok]', box).forEach(b => b.onclick = async () => {
+        const u = b.dataset.ok, rs = box.querySelector(`[data-prol="${u}"]`), js = box.querySelector(`[data-pjefe="${u}"]`);
+        b.disabled = true; try { const r = await gsPost({ action: 'approveUser', usuario: u, rol: rs ? rs.value : 'consulta', jefe: js ? js.value : '', appUrl: APP }); toast(r.correo ? 'Aprobado. Se le envió un correo.' : 'Aprobado (no se pudo enviar el correo).', 5000); } catch (e) { toast(e.message, 5000); } renderUsuarios();
+      });
+      $$('[data-no]', box).forEach(b => b.onclick = async () => {
+        const tr = b.closest('tr'); if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = '¿Seguro? Rechazar'; tr.insertAdjacentHTML('afterend', `<tr class="motivo"><td colspan="7"><input class="inp" style="width:100%" placeholder="Motivo (opcional, se incluye en el correo)" data-motivo="${esc(b.dataset.no)}"></td></tr>`); return; }
+        const mi = box.querySelector(`[data-motivo="${b.dataset.no}"]`);
+        b.disabled = true; try { const r = await gsPost({ action: 'rejectUser', usuario: b.dataset.no, motivo: mi ? mi.value.trim() : '' }); toast(r.correo ? 'Rechazado. Se le envió un correo.' : 'Rechazado (no se pudo enviar el correo).', 5000); } catch (e) { toast(e.message, 5000); } renderUsuarios();
+      });
       $$('[data-act]', box).forEach(b => b.onclick = () => upd({ usuario: b.dataset.act, activo: b.dataset.on === '1' }, b.dataset.on === '1' ? 'Usuario activado' : 'Usuario desactivado'));
-      $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), rol: $('#nuR', box).value, jefe: $('#nuJ', box).value, password: $('#nuP', box).value }); toast('Usuario agregado'); renderUsuarios(); } catch (er) { toast(er.message, 5000); } };
+      $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), rol: $('#nuR', box).value, jefe: $('#nuJ', box).value, email: $('#nuE', box).value.trim(), password: $('#nuP', box).value, appUrl: APP }); toast('Usuario agregado'); renderUsuarios(); } catch (er) { toast(er.message, 5000); } };
     } catch (e) { box.innerHTML = `<div class="card"><div class="note" style="color:#f87171">No se pudieron cargar los usuarios: ${esc(e.message === 'timeout' ? 'Google tardó demasiado en responder' : e.message)}</div><button class="btn sm mt" id="usrRetry">Reintentar</button></div>`; $('#usrRetry').onclick = () => renderUsuarios(); }
   }
 }
@@ -1315,29 +1335,37 @@ async function renderUsuarios() {
       const el = modal(`<p class="muted" id="lkT" style="text-align:center;margin:6px 0 18px">Inicia sesión para entrar.</p>
         <form id="lkF" class="ctrl" style="gap:10px">
           <input class="inp" id="lkUrl" placeholder="URL de la aplicación web de Apps Script (…/exec)" style="${askUrl ? '' : 'display:none'}" value="${esc(g.url)}">
-          <input class="inp" id="lkNom" placeholder="Tu nombre" style="display:none" autocomplete="name">
+          <input class="inp" id="lkNom" placeholder="Tu nombre completo" style="display:none" autocomplete="name">
+          <input class="inp" id="lkMail" type="email" placeholder="Tu correo" style="display:none" autocomplete="email" autocapitalize="none">
           <input class="inp" id="lkU" placeholder="Usuario" autocomplete="username" autocapitalize="none" autofocus>
           <input class="inp" id="lkP" type="password" placeholder="Contraseña" autocomplete="current-password">
           <input class="inp" id="lkP2" type="password" placeholder="Repite la contraseña" autocomplete="new-password" style="display:none">
           <button class="btn pri" id="lkB" type="submit" style="justify-content:center">Entrar</button>
           <div class="note" id="lkM" style="text-align:center;min-height:18px"></div>
+          <button type="button" class="btn sm ghost" id="lkReg" style="justify-content:center;display:none">¿No tienes cuenta? Solicitar acceso</button>
           ${GS_FIXED ? '' : `<button type="button" class="btn sm ghost" id="lkChg" style="justify-content:center;${askUrl ? 'display:none' : ''}">Usar otra base de datos</button>`}
         </form>`);
       const msg = t => $('#lkM', el).innerHTML = t;
       let mode = 'login';
       const setMode = m => {
-        mode = m; const creating = m === 'setup' || m === 'crear';
-        $('#lkNom', el).style.display = m === 'setup' ? '' : 'none';
+        mode = m; const creating = m === 'setup' || m === 'crear' || m === 'registro';
+        $('#lkNom', el).style.display = m === 'setup' || m === 'registro' ? '' : 'none';
+        $('#lkMail', el).style.display = m === 'setup' || m === 'registro' ? '' : 'none';
+        $('#lkReg', el).style.display = m === 'login' || m === 'registro' ? '' : 'none';
+        $('#lkReg', el).textContent = m === 'registro' ? 'Ya tengo cuenta: iniciar sesión' : '¿No tienes cuenta? Solicitar acceso';
         $('#lkP2', el).style.display = creating ? '' : 'none';
         $('#lkP', el).autocomplete = creating ? 'new-password' : 'current-password';
-        $('#lkT', el).textContent = m === 'setup' ? 'Primera vez: crea la cuenta de administración (contraseña de mínimo 8 caracteres).' : m === 'crear' ? 'Crea tu contraseña nueva (mínimo 8 caracteres).' : 'Inicia sesión para entrar.';
-        $('#lkB', el).textContent = m === 'setup' ? 'Crear cuenta y entrar' : m === 'crear' ? 'Crear contraseña y entrar' : 'Entrar';
+        $('#lkT', el).textContent = m === 'setup' ? 'Primera vez: crea la cuenta de administración (contraseña de mínimo 8 caracteres).' : m === 'crear' ? 'Crea tu contraseña nueva (mínimo 8 caracteres).' : m === 'registro' ? 'Solicita acceso. Administración debe aprobarte; te llegará un correo.' : 'Inicia sesión para entrar.';
+        $('#lkB', el).textContent = m === 'setup' ? 'Crear cuenta y entrar' : m === 'crear' ? 'Crear contraseña y entrar' : m === 'registro' ? 'Enviar solicitud' : 'Entrar';
+        $('#lkU', el).placeholder = m === 'registro' ? 'Elige un usuario (ej. maria.perez)' : 'Usuario';
+        msg('');
       };
       const probe = async () => {
         $('#lkB', el).disabled = true; $('#lkT', el).textContent = 'Conectando…';
-        try { const st = await gsCall({ action: 'setupStatus' }, 30000); setMode(st.necesitaConfiguracion ? 'setup' : 'login'); } catch (e) { setMode('login'); msg(red('No se pudo conectar con Apps Script: ' + e.message)); }
+        try { const st = await gsCall({ action: 'setupStatus' }, 30000); if (st.necesitaConfiguracion) setMode('setup'); else if (mode !== 'registro') setMode('login'); } catch (e) { setMode('login'); msg(red('No se pudo conectar con Apps Script: ' + e.message)); }
         $('#lkB', el).disabled = false;
       };
+      $('#lkReg', el).onclick = () => setMode(mode === 'registro' ? 'login' : 'registro');
       $('#lkChg', el) && ($('#lkChg', el).onclick = () => { $('#lkUrl', el).style.display = ''; $('#lkUrl', el).focus(); });
       $('#lkUrl', el).onchange = () => { const u = $('#lkUrl', el).value.trim(); if (okUrl(u)) { g.url = u; gsRemember(); probe(); } };
       $('#lkF', el).onsubmit = async e => {
@@ -1350,9 +1378,21 @@ async function renderUsuarios() {
           if (pw.length < 8) return msg(red('Usa al menos 8 caracteres.'));
           if (pw !== $('#lkP2', el).value) return msg(red('Las contraseñas no coinciden.'));
         }
-        msg('Verificando…');
+        if (mode === 'registro' || mode === 'setup') {
+          if (!$('#lkNom', el).value.trim()) return msg(red('Escribe tu nombre.'));
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test($('#lkMail', el).value.trim())) return msg(red('Escribe un correo válido.'));
+        }
+        msg(mode === 'registro' ? 'Enviando solicitud…' : 'Verificando…');
+        if (mode === 'registro') {
+          try {
+            await gsCall({ action: 'register', usuario, nombre: $('#lkNom', el).value.trim(), email: $('#lkMail', el).value.trim(), password: pw, appUrl: (location.origin + location.pathname) });
+            ['#lkP', '#lkP2'].forEach(k => $(k, el).value = ''); setMode('login'); $('#lkU', el).value = usuario;
+            msg('<span style="color:#34d399">Solicitud enviada. Te llegará un correo cuando Administración la apruebe.</span>');
+          } catch (er) { msg(red(er.message)); }
+          return;
+        }
         try {
-          if (mode === 'setup') await gsCall({ action: 'setupAdmin', usuario, nombre: $('#lkNom', el).value.trim(), password: pw });
+          if (mode === 'setup') await gsCall({ action: 'setupAdmin', usuario, nombre: $('#lkNom', el).value.trim(), email: $('#lkMail', el).value.trim(), password: pw });
           if (mode === 'crear') await gsCall({ action: 'createPassword', usuario, password: pw });
           const d = await gsCall({ action: 'login', usuario, password: pw });
           g.token = d.token; g.me = d.me; gsRemember();
@@ -1370,7 +1410,7 @@ async function renderUsuarios() {
     if (window.claude) return false; // dentro de Claude el artifact ya es privado y no puede salir a Google
     const g = gsCfg();
     if (g.url && g.token) {
-      try { const p = await gsGet({ action: 'ping' }); g.me = p.me; gsRemember(); S.gsStatus = 'ok'; return false; }
+      try { const p = await gsGet({ action: 'ping' }); g.me = p.me; gsRemember(); S.gsStatus = 'ok'; S.pendientes = p.pendientes || 0; return false; }
       catch (e) { if (e.message === 'DEBE_CAMBIAR') { await changePwDialog(true); S.gsStatus = 'ok'; return false; } return true; }
     }
     return true;
@@ -1388,6 +1428,7 @@ async function renderUsuarios() {
     renderAll();
     if (!window.claude && gsOn()) $('#btnLogout').style.display = '';
     aplicarPermisos();
+    if (!window.claude && gsOn() && puede('usuarios')) gsGet({ action: 'ping' }).then(p => { S.pendientes = p.pendientes || 0; aplicarPermisos(); }).catch(() => { });
     capUse('downloads').then(d => S.downloads = d);
   })();
 })();

@@ -18,7 +18,8 @@
 var HOJA_ID = '';  // opcional: ID del Sheet si el script no está dentro de la hoja
 var AJUSTES = { SESION_DIAS: 30, ITERACIONES: 1000, INTENTOS: 5, ESPERA_MIN: 15 };
 var PARTE = 45000; // caracteres por celda (el límite de Sheets es 50.000)
-var COLS_USUARIOS = ['usuario', 'nombre', 'salt', 'hash', 'activo', 'esAdmin', 'debeCambiar', 'creado', 'rol', 'jefe'];
+var COLS_USUARIOS = ['usuario', 'nombre', 'salt', 'hash', 'activo', 'esAdmin', 'debeCambiar', 'creado', 'rol', 'jefe', 'email', 'estado'];
+var NOMBRE_APP = 'Cartera GSF · Dashboard';
 /* Jerarquía de roles (de mayor a menor) y lo que puede hacer cada uno:
    admin     → todo, más crear usuarios y asignar roles
    gerencia  → ver todo, cargar meses, borrar meses, cambiar supuestos de la meta, descargar Excel y presentaciones
@@ -53,7 +54,31 @@ function fila_(cols, o) { return cols.map(function (c) { return o[c] === undefin
 function usuarios_() { return tabla_('Usuarios', COLS_USUARIOS); }
 function usuario_(u) { u = String(u || '').trim().toLowerCase(); var T = usuarios_(); for (var i = 0; i < T.objs.length; i++) if (T.objs[i].usuario.toLowerCase() === u) return { T: T, i: i, u: T.objs[i] }; return null; }
 function guardarUsuario_(T, i, o) { T.sh.getRange(i + 2, 1, 1, COLS_USUARIOS.length).setNumberFormat('@').setValues([fila_(COLS_USUARIOS, o)]); }
-function publico_(u) { var r = rolDe_(u); return { usuario: u.usuario, nombre: u.nombre, rol: r, jefe: u.jefe || '', esAdmin: r === 'admin', activo: u.activo === 'TRUE', permisos: PERMISOS[r] }; }
+function publico_(u) { var r = rolDe_(u); return { usuario: u.usuario, nombre: u.nombre, rol: r, jefe: u.jefe || '', esAdmin: r === 'admin', activo: u.activo === 'TRUE', permisos: PERMISOS[r], email: u.email || '', estado: estado_(u), creado: u.creado || '' }; }
+function estado_(u) { return u.estado === 'pendiente' || u.estado === 'rechazado' ? u.estado : (u.activo === 'TRUE' ? 'activo' : 'inactivo'); }
+function emailValido_(e, requerido) {
+  e = String(e || '').trim().toLowerCase();
+  if (!e) { if (requerido) throw err_('Escribe tu correo.'); return ''; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 120) throw err_('Correo no válido.');
+  return e;
+}
+/* ---------- correos (MailApp: se envían desde la cuenta dueña del script) ---------- */
+function correo_(para, asunto, texto) {
+  if (!para) return false;
+  try {
+    var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#0f172a;max-width:560px">' +
+      '<div style="background:#0f2a52;color:#fff;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:bold">' + NOMBRE_APP + '</div>' +
+      '<div style="border:1px solid #e2e8f0;border-top:0;padding:18px;border-radius:0 0 10px 10px;line-height:1.6">' + texto.replace(/\n/g, '<br>') + '</div></div>';
+    MailApp.sendEmail({ to: para, subject: asunto + ' · ' + NOMBRE_APP, htmlBody: html, body: texto.replace(/<[^>]+>/g, ''), name: NOMBRE_APP });
+    return true;
+  } catch (e) { console.error('Correo no enviado a ' + para + ': ' + e); return false; }
+}
+function correosAdmins_() {
+  var out = usuarios_().objs.filter(function (u) { return rolDe_(u) === 'admin' && u.activo === 'TRUE' && u.email; }).map(function (u) { return u.email; });
+  if (!out.length) { try { var d = Session.getEffectiveUser().getEmail(); if (d) out.push(d); } catch (e) { } }
+  return out.join(',');
+}
+function enlace_(url) { url = String(url || ''); return /^https:\/\//.test(url) ? '<a href="' + url + '">' + url + '</a>' : 'la página del dashboard'; }
 
 /* ---------- sesiones (30 días) ---------- */
 function sesionCrear_(usuario) {
@@ -92,7 +117,23 @@ var PUBLICAS = {
     if (!String(b.nombre || '').trim()) throw err_('Escribe tu nombre.');
     if (clave.length < 8) throw err_('La contraseña debe tener al menos 8 caracteres.');
     var salt = uuid_();
-    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: 'TRUE', debeCambiar: 'FALSE', creado: new Date().toISOString(), rol: 'admin', jefe: '' });
+    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: 'TRUE', debeCambiar: 'FALSE', creado: new Date().toISOString(), rol: 'admin', jefe: '', email: emailValido_(b.email, false), estado: 'activo' });
+    return { ok: true };
+  },
+  register: function (b) {
+    if (!usuarios_().objs.length) throw err_('Primero hay que crear la cuenta de administración.');
+    var usuario = String(b.usuario || '').trim().toLowerCase(), clave = String(b.password || ''), nombre = String(b.nombre || '').trim().slice(0, 80), email = emailValido_(b.email, true);
+    if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) throw err_('Usuario no válido (3-30 letras minúsculas, números, punto o guion).');
+    if (!nombre) throw err_('Escribe tu nombre completo.');
+    if (clave.length < 8) throw err_('La contraseña debe tener al menos 8 caracteres.');
+    var T = usuarios_();
+    if (usuario_(usuario)) throw err_('Ese usuario ya existe. Elige otro.');
+    if (T.objs.some(function (u) { return String(u.email).toLowerCase() === email && u.estado !== 'rechazado'; })) throw err_('Ya hay una cuenta o solicitud con ese correo.');
+    if (T.objs.filter(function (u) { return u.estado === 'pendiente'; }).length >= 30) throw err_('Hay demasiadas solicitudes pendientes. Intenta más tarde.');
+    var salt = uuid_();
+    agregar_(T.sh, COLS_USUARIOS, { usuario: usuario, nombre: nombre, salt: salt, hash: hashClave_(salt, clave), activo: 'FALSE', esAdmin: 'FALSE', debeCambiar: 'FALSE', creado: new Date().toISOString(), rol: 'consulta', jefe: '', email: email, estado: 'pendiente' });
+    correo_(correosAdmins_(), 'Nueva solicitud de acceso', '<b>' + nombre + '</b> (' + usuario + ', ' + email + ') pidió acceso al dashboard.\n\nEntra a ' + enlace_(b.appUrl) + ' → pestaña <b>Usuarios</b> para aprobarla o rechazarla.');
+    correo_(email, 'Recibimos tu solicitud', 'Hola ' + nombre + ',\n\nRecibimos tu solicitud de acceso con el usuario <b>' + usuario + '</b>. Te avisaremos por este medio cuando Administración la revise.');
     return { ok: true };
   },
   login: function (b) {
@@ -100,6 +141,8 @@ var PUBLICAS = {
     if (fallos_(usuario) >= AJUSTES.INTENTOS) throw err_('Demasiados intentos fallidos. Espera ' + AJUSTES.ESPERA_MIN + ' minutos e inténtalo de nuevo.');
     var r = usuario_(usuario);
     if (r && r.u.activo === 'TRUE' && !r.u.hash) throw err_('CREAR_CLAVE');
+    if (r && (r.u.estado === 'pendiente' || r.u.estado === 'rechazado') && r.u.hash && hashClave_(r.u.salt, String(b.password || '')) === r.u.hash)
+      throw err_(r.u.estado === 'pendiente' ? 'Tu solicitud todavía está pendiente de aprobación. Te llegará un correo cuando la aprueben.' : 'Tu solicitud de acceso fue rechazada. Consulta con Administración.');
     if (!r || r.u.activo !== 'TRUE' || hashClave_(r.u.salt, String(b.password || '')) !== r.u.hash) {
       CC.put('fallos_' + usuario, String(fallos_(usuario) + 1), AJUSTES.ESPERA_MIN * 60);
       Utilities.sleep(600); throw err_('Usuario o contraseña incorrectos.');
@@ -119,7 +162,7 @@ var PUBLICAS = {
 
 /* ---------- acciones con sesión ---------- */
 var PRIVADAS = {
-  ping: function (b, me) { return { hoja: libro_().getName(), me: publico_(me) }; },
+  ping: function (b, me) { var o = { hoja: libro_().getName(), me: publico_(me) }; if (rolDe_(me) === 'admin') o.pendientes = usuarios_().objs.filter(function (u) { return u.estado === 'pendiente'; }).length; return o; },
   list: function () { return { meses: listar_() }; },
   getModel: function (b) { return { data: leerModelo_(b.month) }; },
   getFiles: function (b) { return { archivos: leerArchivos_(b.month) }; },
@@ -143,7 +186,9 @@ var PRIVADAS = {
     if (usuario_(usuario)) throw err_('Ese usuario ya existe.');
     if (clave.length < 8) throw err_('La contraseña temporal debe tener al menos 8 caracteres.');
     var rol = rolValido_(b.rol), jefe = jefeValido_(usuario, b.jefe), salt = uuid_();
-    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre || usuario).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: rol === 'admin' ? 'TRUE' : 'FALSE', debeCambiar: 'TRUE', creado: new Date().toISOString(), rol: rol, jefe: jefe });
+    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre || usuario).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: rol === 'admin' ? 'TRUE' : 'FALSE', debeCambiar: 'TRUE', creado: new Date().toISOString(), rol: rol, jefe: jefe, email: emailValido_(b.email, false), estado: 'activo' });
+    var em = emailValido_(b.email, false);
+    if (em) correo_(em, 'Te dieron acceso', 'Hola ' + String(b.nombre || usuario) + ',\n\nAdministración te creó una cuenta en el dashboard con el usuario <b>' + usuario + '</b>. La contraseña temporal te la entrega Administración; al entrar el sistema te pedirá cambiarla.\nEntra en ' + enlace_(b.appUrl) + '.');
     return { ok: true };
   },
   updateUser: function (b, me) {
@@ -151,13 +196,32 @@ var PRIVADAS = {
     var propio = r.u.usuario.toLowerCase() === me.usuario.toLowerCase();
     if (b.rol !== undefined) { var rol = rolValido_(b.rol); if (propio && rol !== 'admin') throw err_('No puedes quitarte tu propio rol de administración. Pídeselo a otra persona administradora.'); r.u.rol = rol; r.u.esAdmin = rol === 'admin' ? 'TRUE' : 'FALSE'; }
     if (b.jefe !== undefined) r.u.jefe = jefeValido_(r.u.usuario.toLowerCase(), b.jefe);
+    if (b.email !== undefined) r.u.email = emailValido_(b.email, false);
     if (b.activo !== undefined) {
       if (propio && !b.activo) throw err_('No puedes desactivar tu propia cuenta.');
-      r.u.activo = b.activo ? 'TRUE' : 'FALSE';
+      r.u.activo = b.activo ? 'TRUE' : 'FALSE'; if (b.activo) r.u.estado = 'activo'; else if (r.u.estado === 'activo' || !r.u.estado) r.u.estado = '';
       if (!b.activo) sesionesBorrar_(function (s) { return s.usuario.toLowerCase() === r.u.usuario.toLowerCase(); });
     }
     guardarUsuario_(r.T, r.i, r.u);
     return { ok: true };
+  },
+  approveUser: function (b, me) {
+    soloAdmin_(me); var r = usuario_(b.usuario); if (!r) throw err_('No existe ese usuario.');
+    if (r.u.estado !== 'pendiente' && r.u.estado !== 'rechazado') throw err_('Ese usuario no tiene una solicitud pendiente.');
+    r.u.rol = rolValido_(b.rol); r.u.esAdmin = r.u.rol === 'admin' ? 'TRUE' : 'FALSE';
+    r.u.jefe = jefeValido_(r.u.usuario.toLowerCase(), b.jefe); r.u.activo = 'TRUE'; r.u.estado = 'activo';
+    guardarUsuario_(r.T, r.i, r.u);
+    var ROLN = { admin: 'Administración', gerencia: 'Gerencia', analista: 'Analista', consulta: 'Consulta' };
+    var env = correo_(r.u.email, 'Tu acceso fue aprobado', 'Hola ' + r.u.nombre + ',\n\nTu acceso al dashboard fue <b>aprobado</b> con el rol <b>' + ROLN[r.u.rol] + '</b>.\nEntra con tu usuario <b>' + r.u.usuario + '</b> y la contraseña que elegiste en ' + enlace_(b.appUrl) + '.');
+    return { ok: true, correo: env };
+  },
+  rejectUser: function (b, me) {
+    soloAdmin_(me); var r = usuario_(b.usuario); if (!r) throw err_('No existe ese usuario.');
+    if (r.u.estado !== 'pendiente') throw err_('Ese usuario no tiene una solicitud pendiente.');
+    r.u.estado = 'rechazado'; r.u.activo = 'FALSE'; guardarUsuario_(r.T, r.i, r.u);
+    var motivo = String(b.motivo || '').trim().slice(0, 300);
+    var env = correo_(r.u.email, 'Tu solicitud de acceso', 'Hola ' + r.u.nombre + ',\n\nTu solicitud de acceso al dashboard <b>no fue aprobada</b>.' + (motivo ? '\nMotivo: ' + motivo.replace(/</g, '&lt;') : '') + '\nSi crees que es un error, consulta con Administración.');
+    return { ok: true, correo: env };
   },
   setActive: function (b, me) { return PRIVADAS.updateUser({ usuario: b.usuario, activo: !!b.activo }, me); }
 };
@@ -177,7 +241,7 @@ function manejar_(b) {
   if (!PRIVADAS[b.action]) throw err_('Acción desconocida.');
   var me = sesionUsuario_(b.token);
   if (me.debeCambiar === 'TRUE' && b.action !== 'changePassword' && b.action !== 'ping') throw err_('DEBE_CAMBIAR');
-  var libres = ['ping', 'changePassword', 'listUsers', 'addUser', 'updateUser', 'setActive'];
+  var libres = ['ping', 'changePassword', 'listUsers', 'addUser', 'updateUser', 'setActive', 'approveUser', 'rejectUser'];
   if (libres.indexOf(b.action) < 0 && PERMISOS[rolDe_(me)].indexOf(b.action) < 0) throw err_('Tu rol (' + rolDe_(me) + ') no permite esta acción.');
   return { ok: true, data: PRIVADAS[b.action](b, me) };
 }
