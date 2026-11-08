@@ -8,7 +8,7 @@ CDN={'echarts':['https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js'
 LOC={'echarts':['node_modules/echarts/dist/echarts.min.js'],'echartsgl':['node_modules/echarts-gl/dist/echarts-gl.min.js'],'xlsx':['node_modules/xlsx/dist/xlsx.full.min.js'],'exceljs':['node_modules/exceljs/dist/exceljs.min.js'],'pptx':['nope.js','node_modules/pptxgenjs/dist/pptxgen.bundle.js']}
 L=LOC if test else CDN
 import os
-GS_URL=os.environ.get('GS_URL','')
+GS_URL=os.environ.get('GS_URL','PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT')
 html=f'''<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">

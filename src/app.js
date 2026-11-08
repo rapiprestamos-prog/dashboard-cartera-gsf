@@ -40,25 +40,25 @@
   // ---------- almacenamiento ----------
   const LS = { get(k) { try { return JSON.parse(localStorage.getItem('gsfdash.' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('gsfdash.' + k, JSON.stringify(v)); } catch (e) { } }, del(k) { try { localStorage.removeItem('gsfdash.' + k); } catch (e) { } } };
   // ---------- Google Sheets (Apps Script) ----------
-  const SS = { get(k) { try { return sessionStorage.getItem('gsfdash.' + k); } catch (e) { return null; } }, set(k, v) { try { sessionStorage.setItem('gsfdash.' + k, v); } catch (e) { } }, del(k) { try { sessionStorage.removeItem('gsfdash.' + k); } catch (e) { } } };
+  // Igual que "Seguimiento de tareas": usuario + contraseña, sesión con token de 30 días guardado en este navegador.
+  const okUrl = u => /^https:\/\//.test(u || '') || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(u || '');
+  const GS_FIXED = okUrl(window.__GS_URL__) ? window.__GS_URL__ : '';
   const gsCfg = () => {
     if (S.gs) return S.gs;
     const saved = LS.get('sheets') || {};
-    S.gs = { url: saved.url || window.__GS_URL__ || '', key: SS.get('key') || saved.key || '', detalle: !!saved.detalle };
+    S.gs = { url: GS_FIXED || saved.url || '', token: LS.get('tok') || '', me: LS.get('me') || null, detalle: !!saved.detalle };
     return S.gs;
   };
-  function gsRemember(remember) { const g = gsCfg(); LS.set('sheets', { url: g.url, detalle: g.detalle, key: remember ? g.key : undefined }); SS.set('key', g.key); }
-  const gsOn = () => { const g = gsCfg(); return !!(g.url && g.key); };
-  async function gsGet(params) {
-    const g = gsCfg(); const q = new URLSearchParams(Object.assign({}, params, { key: g.key }));
-    const r = await withTimeout(fetch(g.url + (g.url.includes('?') ? '&' : '?') + q.toString(), { redirect: 'follow' }), 60000);
-    const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Error en Google Sheets'); return j;
-  }
-  async function gsPost(body) {
+  function gsRemember() { const g = gsCfg(); LS.set('sheets', { url: GS_FIXED ? undefined : g.url, detalle: g.detalle }); if (g.token) { LS.set('tok', g.token); LS.set('me', g.me); } else { LS.del('tok'); LS.del('me'); } }
+  const gsOn = () => { const g = gsCfg(); return !!(g.url && g.token); };
+  async function gsCall(body, ms) {
     const g = gsCfg();
-    const r = await withTimeout(fetch(g.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({}, body, { key: g.key })) }), 120000);
-    const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Error en Google Sheets'); return j;
+    const r = await withTimeout(fetch(g.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({}, body, { token: g.token })) }), ms || 120000);
+    const j = await r.json();
+    if (!j.ok) { if (j.error === 'SESION' && g.token) { g.token = ''; gsRemember(); } throw new Error(j.error || 'Error en Google Sheets'); }
+    return j.data || {};
   }
+  const gsGet = p => gsCall(p, 60000), gsPost = b => gsCall(b);
   async function gzip(str) {
     if (typeof CompressionStream === 'undefined') return 'raw:' + str;
     const cs = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
@@ -1048,20 +1048,21 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       <div class="card mt" id="gsCard"><h3>Base de datos en Google Sheets <small>${gsOn() ? (S.gsStatus === 'ok' ? '<span class="chip up">conectado</span>' : S.gsStatus ? '<span class="chip down">sin conexión</span>' : 'configurado') : 'opcional'}</small></h3>
         <div class="note" style="margin:-4px 0 12px">Guarda el historial en una hoja de Google tuya, para verlo desde cualquier equipo. ${window.claude ? '<b style="color:#fbbf24">Dentro de Claude el navegador bloquea conexiones externas: esto funciona cuando abres el dashboard desde Vercel o como archivo.</b>' : ''}</div>
         <div class="grid g2" style="gap:10px">
-          <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">URL de la aplicación web (termina en /exec)</span><input class="inp" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(gsCfg().url)}"></label>
-          <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Clave (la misma que pusiste en el Apps Script)</span><input class="inp" id="gsKey" type="password" value="${esc(gsCfg().key)}"></label>
+          <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">URL de la aplicación web (termina en /exec)${GS_FIXED ? ' · fija en index.html' : ''}</span><input class="inp" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(gsCfg().url)}" ${GS_FIXED ? 'readonly' : ''}></label>
+          <div class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Sesión</span><div style="padding:9px 0">${gsOn() && gsCfg().me ? `<b>${esc(gsCfg().me.nombre || gsCfg().me.usuario)}</b> <span class="muted">(${esc(gsCfg().me.usuario)}${gsCfg().me.esAdmin ? ' · administración' : ''})</span>` : '<span class="muted">sin iniciar</span>'}</div></div>
         </div>
         <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px"><input type="checkbox" id="gsDet" ${gsCfg().detalle ? 'checked' : ''} style="margin-top:3px"> <span>Guardar también el detalle por cliente (nombre, cédula, saldo, letra, cobrado). Permite reabrir meses anteriores y descargar el Excel GSF, las letras y la presentación sin volver a subir los reportes. Quien tenga acceso a la hoja verá esos datos.</span></label>
-        <div class="tools mt"><button class="btn pri sm" id="gsSave">Guardar y probar conexión</button><button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button><button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>${gsOn() ? '<button class="btn sm ghost" id="gsOff">Desconectar</button>' : ''}</div>
+        <div class="tools mt"><button class="btn pri sm" id="gsSave">${gsOn() ? 'Probar conexión' : 'Conectar e iniciar sesión'}</button>${gsOn() ? '<button class="btn sm" id="gsPw">Cambiar mi contraseña</button>' : ''}${gsOn() && gsCfg().me && gsCfg().me.esAdmin ? '<button class="btn sm" id="gsUsers">Usuarios</button>' : ''}<button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button><button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>${gsOn() ? '<button class="btn sm ghost" id="gsOff">Cerrar sesión</button>' : ''}</div>
+        <div id="gsUsersBox"></div>
         <div class="note" id="gsMsg">${S.gsStatus && S.gsStatus !== 'ok' ? esc(S.gsStatus) : ''}</div>
         <details class="mt"><summary style="cursor:pointer;font-weight:600">Cómo crear la hoja (5 minutos)</summary><ol class="note" style="line-height:1.7">
           <li>Con tu cuenta de Google (por ejemplo proyectosrapiprestamos), crea un Google Sheet nuevo llamado "Historial dashboard cartera".</li>
           <li>Abre <b>Extensiones → Apps Script</b>, borra lo que haya y pega el código (botón <i>Copiar código</i> o <i>Descargar</i>).</li>
-          <li>En la línea <code>const CLAVE = …</code> pon una clave larga y secreta. Guarda.</li>
-          <li>Elige la función <b>instalar</b> y dale <b>Ejecutar</b>; acepta los permisos. Se crean las hojas Meses, Clientes, Modelo y Config.</li>
-          <li><b>Implementar → Nueva implementación → Aplicación web</b>. Ejecutar como: <b>Yo</b>. Quién tiene acceso: <b>Cualquier persona</b>. Copia la URL que termina en <code>/exec</code>.</li>
-          <li>Pega aquí la URL y la clave, marca si quieres guardar el detalle y toca <b>Guardar y probar conexión</b>. Luego <b>Subir a Sheets los meses de este navegador</b>.</li>
-        </ol><div class="note">La clave evita que alguien con la URL lea o escriba. Si cambias el código del Apps Script, usa <b>Implementar → Administrar implementaciones → Editar → Nueva versión</b> para que la URL siga igual.</div></details>
+          <li>Guarda el proyecto.</li>
+          <li>Vuelve al Sheet y recarga: aparece el menú <b>Dashboard cartera → Instalar</b>. Acepta los permisos. Se crean las hojas Meses, Clientes, Modelo, Config, Usuarios y Sesiones.</li>
+          <li>En Apps Script: <b>Implementar → Nueva implementación → Aplicación web</b>. Ejecutar como: <b>Yo</b>. Quién tiene acceso: <b>Cualquier usuario</b>. Copia la URL que termina en <code>/exec</code> y pégala en <code>index.html</code> (donde dice PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT) o en este campo.</li>
+          <li>La primera vez que abras la página te pide <b>crear la cuenta de administración</b> (usuario y contraseña). Desde <b>Usuarios</b> puedes dar acceso a otras personas.</li>
+        </ol><div class="note">Las contraseñas se guardan con sal y SHA-256 (1000 vueltas) en la hoja Usuarios; la sesión dura 30 días y tras 5 intentos fallidos hay que esperar 15 minutos. Si alguien olvida su contraseña: menú <b>Dashboard cartera → Permitir que un usuario cree una contraseña nueva</b>. Si cambias el código del Apps Script, usa <b>Implementar → Administrar implementaciones → Editar → Nueva versión</b> para que la URL siga igual.</div></details>
       </div>
       <div class="card mt"><h3>Historial guardado <small>${gsOn() && S.gsStatus === 'ok' ? 'en Google Sheets' : S.store ? 'en tu cuenta de Claude' : 'en este navegador'}</small></h3>
         <div class="note" style="margin:-4px 0 12px">${S.store ? 'Se guarda en el almacenamiento privado de tu cuenta de Claude: solo tú lo ves, en cualquier dispositivo donde abras este dashboard.' : 'Se guarda en el almacenamiento local de este navegador (localStorage), en este equipo. No se sube a ningún servidor: otro navegador o dispositivo tiene su propio historial, y si borras los datos del navegador se pierde. Usa Exportar / Importar para pasarlo de un equipo a otro.'} Solo guarda los totales de cada mes (cartera, mora, recaudo, meta, cosechas, totales por patrono y oficial) y el tramo de mora de cada número de contrato, que sirve para ver quién cambió de tramo de un mes a otro. Nunca guarda nombres de clientes, cédulas ni saldos por cliente.</div>
@@ -1073,18 +1074,32 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     $('#histTbl').innerHTML = ms.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Mes</th><th class="n">Cartera</th><th class="n">PAR30</th><th class="n">Recaudo</th><th>Detalle</th><th></th></tr></thead><tbody>${ms.map(m => { const h = S.history[m]; return `<tr><td><b>${esc(h.label)}</b></td><td class="n">${money0(h.kpi.cartera)}</td><td class="n">${pct(h.kpi.par30Pct)}</td><td class="n">${money0(h.kpi.recaudo)}</td><td>${S.models[m] ? '<span class="chip up">cargado</span>' : '<span class="muted">solo totales</span>'}</td><td class="right"><button class="btn sm ghost" data-go="${m}">Ver</button> <button class="btn sm ghost" data-del="${m}">Borrar</button></td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted">Todavía no hay meses guardados.</div>';
     const gsMsg = t => { const el = $('#gsMsg'); if (el) el.innerHTML = t; };
     $('#gsSave').onclick = async () => {
-      const url = $('#gsUrl').value.trim(), key = $('#gsKey').value.trim();
-      if (!/^https?:\/\//.test(url) || !key) { gsMsg('<span style="color:#f87171">Escribe la URL (/exec) y la clave.</span>'); return; }
-      S.gs = { url, key, detalle: $('#gsDet').checked }; gsRemember(!!(LS.get('sheets') || {}).key);
+      const url = $('#gsUrl').value.trim();
+      if (!okUrl(url)) { gsMsg('<span style="color:#f87171">Escribe la URL (/exec).</span>'); return; }
+      const g = gsCfg(); if (url !== g.url) { g.url = url; g.token = ''; g.me = null; } gsRemember();
+      if (!g.token) { location.reload(); return; }
       gsMsg('Probando conexión…');
       try {
         const p = await gsGet({ action: 'ping' }); const lst = await gsGet({ action: 'list' });
         (lst.meses || []).forEach(m => { S.history[m.month] = m.agg; S.gsDetalle[m.month] = m.detalle; });
         S.gsStatus = 'ok'; if (!S.current) S.current = months().slice(-1)[0] || null;
         toast(`Conectado a "${p.hoja}" · ${(lst.meses || []).length} meses en la hoja`, 5000); renderAll();
-      } catch (e) { S.gsStatus = 'error: ' + e.message; gsMsg('<span style="color:#f87171">No se pudo conectar: ' + esc(e.message) + '</span>'); }
+      } catch (e) { S.gsStatus = 'error: ' + e.message; gsMsg('<span style="color:#f87171">No se pudo conectar: ' + esc(e.message === 'SESION' ? 'la sesión venció, vuelve a entrar' : e.message) + '</span>'); }
     };
-    $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(!!(LS.get('sheets') || {}).key); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
+    $('#gsPw') && ($('#gsPw').onclick = () => changePwDialog(false).then(ok => ok && toast('Contraseña cambiada')));
+    $('#gsUsers') && ($('#gsUsers').onclick = () => renderUsers());
+    async function renderUsers() {
+      const box = $('#gsUsersBox'); box.innerHTML = '<div class="note">Cargando usuarios…</div>';
+      try {
+        const { usuarios } = await gsPost({ action: 'listUsers' });
+        box.innerHTML = `<div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td><td>${u.esAdmin ? 'Administración' : 'Usuario'}</td><td>${u.activo ? '<span class="chip up">activo</span>' : '<span class="chip down">inactivo</span>'}</td><td class="right">${u.usuario === gsCfg().me.usuario ? '' : `<button class="btn sm ghost" data-act="${esc(u.usuario)}" data-on="${u.activo ? 0 : 1}">${u.activo ? 'Desactivar' : 'Activar'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+          <form id="nuF" class="mt" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;align-items:end"><input class="inp" id="nuU" placeholder="usuario" autocomplete="off"><input class="inp" id="nuN" placeholder="Nombre"><input class="inp" id="nuP" type="password" placeholder="Contraseña temporal" autocomplete="new-password"><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="nuA"> Administración <button class="btn pri sm" type="submit" style="margin-left:auto">Agregar</button></label></form>
+          <div class="note">La persona entra con esa contraseña temporal y el sistema le pide cambiarla.</div>`;
+        $$('[data-act]', box).forEach(b => b.onclick = async () => { try { await gsPost({ action: 'setActive', usuario: b.dataset.act, activo: b.dataset.on === '1' }); renderUsers(); } catch (e) { toast(e.message); } });
+        $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), password: $('#nuP', box).value, esAdmin: $('#nuA', box).checked }); toast('Usuario agregado'); renderUsers(); } catch (er) { toast(er.message, 5000); } };
+      } catch (e) { box.innerHTML = '<div class="note" style="color:#f87171">' + esc(e.message) + '</div>'; }
+    }
+    $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
     $('#gsPush').onclick = async () => {
       const ms = months(); let n = 0;
       try { for (const m of ms) { loader(true, `Subiendo ${C.monthLabel(m)} a Google Sheets…`, Math.round(100 * n / ms.length)); await gsSaveMonth(S.history[m], S.models[m] && !S.models[m].fromSheets ? S.models[m].model : null); n++; } loader(false); toast(`${n} meses subidos a Google Sheets`); renderAll(); }
@@ -1093,7 +1108,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     const code = () => window.__APPS_SCRIPT__ || '';
     $('#gsCode').onclick = () => saveFile('Code.gs.txt', new Blob([code()], { type: 'text/plain' }));
     $('#gsCopy').onclick = async () => { try { await navigator.clipboard.writeText(code()); toast('Código copiado'); } catch (e) { toast('No se pudo copiar; usa Descargar'); } };
-    $('#gsOff') && ($('#gsOff').onclick = () => { LS.del('sheets'); SS.del('key'); S.gs = null; S.gsStatus = ''; S.gsDetalle = {}; toast('Desconectado de Google Sheets'); renderAll(); });
+    $('#gsOff') && ($('#gsOff').onclick = () => window.gsfLogout());
     $('#histExp').onclick = () => { const out = {}; months().forEach(m => out[m] = S.history[m]); saveFile(`Historial dashboard cartera ${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify({ tipo: 'historial-dashboard-cartera', v: 1, meses: out, config: S.config }, null, 1)], { type: 'application/json' })); };
     $('#histImp').onclick = () => $('#histFile').click();
     $('#histFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const j = JSON.parse(await f.text()); if (j.tipo !== 'historial-dashboard-cartera' || !j.meses) throw new Error('Ese archivo no es un historial del dashboard.'); let n = 0; for (const m in j.meses) { const h = j.meses[m]; if (h && h.month && h.kpi) { S.history[h.month] = h; await saveMonth(h); n++; } } if (j.config) { mergeConfig(j.config); saveConfig(); } S.current = months().slice(-1)[0]; renderAll(); toast(`${n} meses importados`); } catch (er) { toast('No se pudo importar: ' + er.message, 5000); } };
@@ -1197,46 +1212,91 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   $('#btnUpload').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = e => { handleFiles([...e.target.files]); e.target.value = ''; };
 
-  // ---------- contraseña (la valida el Apps Script; fuera de Claude) ----------
+  // ---------- acceso: usuario y contraseña (los valida el Apps Script; fuera de Claude) ----------
+  const CUBE = '<div class="cube" style="width:46px;height:46px;margin:0 auto 14px"><div class="c"><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div></div></div>';
+  const red = t => '<span style="color:#f87171">' + esc(t) + '</span>';
+  function modal(inner) { const el = document.createElement('div'); el.className = 'lock'; el.innerHTML = `<div class="card lockbox">${CUBE}<h2 style="text-align:center">Cartera GSF · Dashboard</h2>${inner}</div>`; document.body.appendChild(el); return el; }
+  function changePwDialog(forced) {
+    return new Promise(resolve => {
+      const el = modal(`<p class="muted" style="text-align:center;margin:6px 0 18px">${forced ? 'Tu contraseña es temporal: crea una nueva para continuar.' : 'Cambiar mi contraseña'}</p>
+        <form id="cpF" class="ctrl" style="gap:10px"><input class="inp" id="cpA" type="password" placeholder="Contraseña actual" autocomplete="current-password"><input class="inp" id="cpN" type="password" placeholder="Contraseña nueva (mínimo 8)" autocomplete="new-password"><input class="inp" id="cpN2" type="password" placeholder="Repite la nueva" autocomplete="new-password">
+        <button class="btn pri" type="submit" style="justify-content:center">Guardar</button>${forced ? '' : '<button type="button" class="btn sm ghost" id="cpX" style="justify-content:center">Cancelar</button>'}<div class="note" id="cpM" style="text-align:center;min-height:18px"></div></form>`);
+      const msg = t => $('#cpM', el).innerHTML = t;
+      $('#cpX', el) && ($('#cpX', el).onclick = () => { el.remove(); resolve(false); });
+      $('#cpF', el).onsubmit = async e => {
+        e.preventDefault(); const n = $('#cpN', el).value;
+        if (n.length < 8) return msg(red('Usa al menos 8 caracteres.'));
+        if (n !== $('#cpN2', el).value) return msg(red('Las contraseñas no coinciden.'));
+        msg('Guardando…');
+        try { await gsPost({ action: 'changePassword', actual: $('#cpA', el).value, nueva: n }); el.remove(); resolve(true); } catch (er) { msg(red(er.message)); }
+      };
+    });
+  }
   function lockScreen() {
     return new Promise(resolve => {
-      const g = gsCfg();
-      const el = document.createElement('div'); el.className = 'lock';
-      const setup = !g.url;
-      el.innerHTML = `<div class="card lockbox"><div class="cube" style="width:46px;height:46px;margin:0 auto 14px"><div class="c"><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div><div class="f"></div></div></div>
-        <h2 style="text-align:center">Cartera GSF · Dashboard</h2><p class="muted" style="text-align:center;margin:6px 0 18px">${setup ? 'Conecta la base de datos de Google Sheets para entrar.' : 'Escribe la contraseña para entrar.'}</p>
-        <form id="lockF" class="ctrl" style="gap:10px">
-          <input class="inp" id="lockUrl" placeholder="URL de la aplicación web de Apps Script (…/exec)" style="${setup ? '' : 'display:none'}" value="${esc(g.url)}">
-          <input class="inp" id="lockPw" type="password" placeholder="Contraseña" autocomplete="current-password" autofocus>
-          <label style="display:flex;gap:8px;align-items:center;font-size:13px" class="tx2"><input type="checkbox" id="lockRem"> Recordar en este equipo</label>
-          <button class="btn pri" type="submit" style="justify-content:center">Entrar</button>
-          <div class="note" id="lockMsg" style="text-align:center;min-height:18px"></div>
-          ${setup ? '' : '<button type="button" class="btn sm ghost" id="lockChange" style="justify-content:center">Usar otra base de datos</button>'}
-          <button type="button" class="btn sm ghost" id="lockCode" style="justify-content:center">Descargar el código de Apps Script</button>
-        </form></div>`;
-      document.body.appendChild(el);
-      const msg = t => $('#lockMsg', el).innerHTML = t;
-      $('#lockChange', el) && ($('#lockChange', el).onclick = () => { $('#lockUrl', el).style.display = ''; $('#lockUrl', el).focus(); });
-      $('#lockCode', el).onclick = () => { const b = new Blob([window.__APPS_SCRIPT__ || ''], { type: 'text/plain' }); const u = URL.createObjectURL(b); const x = document.createElement('a'); x.href = u; x.download = 'Code.gs.txt'; document.body.appendChild(x); x.click(); x.remove(); };
-      $('#lockF', el).onsubmit = async e => {
-        e.preventDefault();
-        const url = $('#lockUrl', el).value.trim(), pw = $('#lockPw', el).value;
-        if (!/^https?:\/\//.test(url)) { msg('<span style="color:#f87171">Falta la URL de Apps Script.</span>'); return; }
-        if (!pw) { msg('<span style="color:#f87171">Escribe la contraseña.</span>'); return; }
-        msg('Verificando…');
-        S.gs = { url, key: pw, detalle: gsCfg().detalle };
-        try { await gsGet({ action: 'ping' }); gsRemember($('#lockRem', el).checked); S.gsStatus = 'ok'; el.remove(); resolve(); }
-        catch (er) { S.gs.key = ''; msg('<span style="color:#f87171">' + (/clave/i.test(er.message) ? 'Contraseña incorrecta.' : 'No se pudo conectar: ' + esc(er.message)) + '</span>'); }
+      const g = gsCfg(), askUrl = !g.url;
+      const el = modal(`<p class="muted" id="lkT" style="text-align:center;margin:6px 0 18px">Inicia sesión para entrar.</p>
+        <form id="lkF" class="ctrl" style="gap:10px">
+          <input class="inp" id="lkUrl" placeholder="URL de la aplicación web de Apps Script (…/exec)" style="${askUrl ? '' : 'display:none'}" value="${esc(g.url)}">
+          <input class="inp" id="lkNom" placeholder="Tu nombre" style="display:none" autocomplete="name">
+          <input class="inp" id="lkU" placeholder="Usuario" autocomplete="username" autocapitalize="none" autofocus>
+          <input class="inp" id="lkP" type="password" placeholder="Contraseña" autocomplete="current-password">
+          <input class="inp" id="lkP2" type="password" placeholder="Repite la contraseña" autocomplete="new-password" style="display:none">
+          <button class="btn pri" id="lkB" type="submit" style="justify-content:center">Entrar</button>
+          <div class="note" id="lkM" style="text-align:center;min-height:18px"></div>
+          ${GS_FIXED ? '' : `<button type="button" class="btn sm ghost" id="lkChg" style="justify-content:center;${askUrl ? 'display:none' : ''}">Usar otra base de datos</button>`}
+          <button type="button" class="btn sm ghost" id="lkCode" style="justify-content:center">Descargar el código de Apps Script</button>
+        </form>`);
+      const msg = t => $('#lkM', el).innerHTML = t;
+      let mode = 'login';
+      const setMode = m => {
+        mode = m; const creating = m === 'setup' || m === 'crear';
+        $('#lkNom', el).style.display = m === 'setup' ? '' : 'none';
+        $('#lkP2', el).style.display = creating ? '' : 'none';
+        $('#lkP', el).autocomplete = creating ? 'new-password' : 'current-password';
+        $('#lkT', el).textContent = m === 'setup' ? 'Primera vez: crea la cuenta de administración (contraseña de mínimo 8 caracteres).' : m === 'crear' ? 'Crea tu contraseña nueva (mínimo 8 caracteres).' : 'Inicia sesión para entrar.';
+        $('#lkB', el).textContent = m === 'setup' ? 'Crear cuenta y entrar' : m === 'crear' ? 'Crear contraseña y entrar' : 'Entrar';
       };
+      const probe = async () => { try { const st = await gsCall({ action: 'setupStatus' }, 30000); if (st.necesitaConfiguracion) setMode('setup'); } catch (e) { msg(red('No se pudo conectar con Apps Script: ' + e.message)); } };
+      $('#lkChg', el) && ($('#lkChg', el).onclick = () => { $('#lkUrl', el).style.display = ''; $('#lkUrl', el).focus(); });
+      $('#lkCode', el).onclick = () => { const b = new Blob([window.__APPS_SCRIPT__ || ''], { type: 'text/plain' }); const u = URL.createObjectURL(b); const x = document.createElement('a'); x.href = u; x.download = 'Code.gs.txt'; document.body.appendChild(x); x.click(); x.remove(); };
+      $('#lkUrl', el).onchange = () => { const u = $('#lkUrl', el).value.trim(); if (okUrl(u)) { g.url = u; gsRemember(); probe(); } };
+      $('#lkF', el).onsubmit = async e => {
+        e.preventDefault();
+        const url = $('#lkUrl', el).value.trim(), usuario = $('#lkU', el).value.trim().toLowerCase(), pw = $('#lkP', el).value;
+        if (!okUrl(url)) return msg(red('Falta la URL de Apps Script.'));
+        if (!usuario || !pw) return msg(red('Escribe tu usuario y contraseña.'));
+        if (url !== g.url) { g.url = url; gsRemember(); }
+        if (mode !== 'login') {
+          if (pw.length < 8) return msg(red('Usa al menos 8 caracteres.'));
+          if (pw !== $('#lkP2', el).value) return msg(red('Las contraseñas no coinciden.'));
+        }
+        msg('Verificando…');
+        try {
+          if (mode === 'setup') await gsCall({ action: 'setupAdmin', usuario, nombre: $('#lkNom', el).value.trim(), password: pw });
+          if (mode === 'crear') await gsCall({ action: 'createPassword', usuario, password: pw });
+          const d = await gsCall({ action: 'login', usuario, password: pw });
+          g.token = d.token; g.me = d.me; gsRemember();
+          if (d.debeCambiar) { el.style.display = 'none'; await changePwDialog(true); }
+          S.gsStatus = 'ok'; el.remove(); resolve();
+        } catch (er) {
+          if (er.message === 'CREAR_CLAVE') { setMode('crear'); msg('Tu contraseña fue restablecida: crea una nueva.'); return; }
+          msg(red(er.message));
+        }
+      };
+      if (!askUrl) probe();
     });
   }
   async function needsLock() {
     if (window.claude) return false; // dentro de Claude el artifact ya es privado y no puede salir a Google
     const g = gsCfg();
-    if (g.url && g.key) { try { await gsGet({ action: 'ping' }); S.gsStatus = 'ok'; return false; } catch (e) { if (/clave/i.test(e.message)) { SS.del('key'); const s = LS.get('sheets') || {}; delete s.key; LS.set('sheets', s); S.gs = null; } return true; } }
+    if (g.url && g.token) {
+      try { const p = await gsGet({ action: 'ping' }); g.me = p.me; gsRemember(); S.gsStatus = 'ok'; return false; }
+      catch (e) { if (e.message === 'DEBE_CAMBIAR') { await changePwDialog(true); S.gsStatus = 'ok'; return false; } return true; }
+    }
     return true;
   }
-  window.gsfLogout = () => { SS.del('key'); const s = LS.get('sheets') || {}; delete s.key; LS.set('sheets', s); location.reload(); };
+  window.gsfLogout = async () => { const g = gsCfg(); try { if (g.token) await gsCall({ action: 'logout' }, 10000); } catch (e) { } g.token = ''; g.me = null; gsRemember(); location.reload(); };
 
   // ---------- inicio ----------
   (async function init() {

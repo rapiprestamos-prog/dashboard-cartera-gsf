@@ -42,18 +42,19 @@ python3 build.py
 
 Librerías (CDN): SheetJS, ExcelJS, ECharts, ECharts GL, PptxGenJS.
 
-## Contraseña e historial en Google Sheets
+## Usuarios, contraseña e historial en Google Sheets
 
-Fuera de Claude (Vercel, GitHub Pages o archivo local) el dashboard pide contraseña al entrar. La contraseña no está en el código: la valida el Apps Script (`CLAVE` en `apps-script/Code.gs`). Sin la contraseña correcta no se abre el dashboard ni se pueden leer los datos de la hoja.
+Mismo esquema que **Seguimiento de tareas**. Fuera de Claude (Vercel, GitHub Pages o archivo local) el dashboard pide **usuario y contraseña**. Ninguna contraseña está en el código: el Apps Script las guarda en la hoja Usuarios con sal y SHA-256 repetido 1000 veces. La sesión dura 30 días (en la hoja Sesiones se guarda la huella del token, no el token) y tras 5 intentos fallidos hay que esperar 15 minutos.
 
 Instalación (cuenta de Google proyectosrapiprestamos):
 
 1. Crea un Google Sheet nuevo: "Historial dashboard cartera".
-2. Extensiones → Apps Script. Pega `apps-script/Code.gs` y cambia `CLAVE` por tu contraseña.
-3. Ejecuta la función `instalar` (crea las hojas Meses, Clientes, Modelo y Config) y acepta los permisos.
-4. Implementar → Nueva implementación → Aplicación web. Ejecutar como: Yo. Acceso: Cualquier persona. Copia la URL `/exec`.
-5. Abre el dashboard, pega la URL y escribe la contraseña. En Cargar / historial elige si se guarda también el detalle por cliente.
+2. Extensiones → Apps Script. Borra lo que haya, pega `apps-script/Code.gs` y guarda.
+3. Recarga el Sheet: menú **Dashboard cartera → Instalar** (crea Meses, Clientes, Modelo, Config, Usuarios y Sesiones). Acepta los permisos.
+4. Implementar → Nueva implementación → Aplicación web. Ejecutar como: **Yo**. Acceso: **Cualquier usuario**. Copia la URL `/exec`.
+5. Pega la URL en `index.html`, donde dice `PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT` (o reconstruye con `GS_URL="https://script.google.com/macros/s/…/exec" python3 build.py`).
+6. La primera vez que abras la página te pide **crear la cuenta de administración**. Desde Cargar / historial → **Usuarios** puedes dar acceso a otras personas con una contraseña temporal (se les pide cambiarla al entrar).
 
-Para que el dashboard ya traiga la URL y solo pida la contraseña: `GS_URL="https://script.google.com/macros/s/…/exec" python3 build.py`.
+Si alguien olvida su contraseña: menú **Dashboard cartera → Permitir que un usuario cree una contraseña nueva**. Si cambias el código del Apps Script, usa Implementar → Administrar implementaciones → Editar → Nueva versión para que la URL no cambie.
 
 Tamaño: con detalle, cada mes ocupa unos 130 KB comprimidos en la hoja Modelo y 271 filas en Clientes.
