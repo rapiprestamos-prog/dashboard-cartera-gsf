@@ -200,6 +200,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
       <a href="#cuadre" data-v="cuadre"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Cuadre</a>
       <a href="#reportes" data-v="reportes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Ver reportes</a>
       <a href="#cargar" data-v="cargar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg>Cargar / historial</a>
+      <a href="#usuarios" data-v="usuarios" id="tabUsuarios" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2M16 3.1a4 4 0 0 1 0 7.8M22 21v-2a4 4 0 0 0-3-3.9"/></svg>Usuarios</a>
     </nav>
   </div>
 </header>
@@ -215,6 +216,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
   <section class="view" id="v-cuadre"></section>
   <section class="view" id="v-reportes"></section>
   <section class="view" id="v-cargar"></section>
+  <section class="view" id="v-usuarios"></section>
 </main>
 <div class="dropall"><div><div class="big"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg></div><b>Suelta los reportes aquí</b><span>Todos juntos, o la carpeta completa</span></div></div>
 <div class="toast" id="toast"></div>
@@ -1121,15 +1123,15 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
   const gsCfg = () => {
     if (S.gs) return S.gs;
     const saved = LS.get('sheets') || {};
-    S.gs = { url: GS_FIXED || saved.url || '', token: LS.get('tok') || '', me: LS.get('me') || null, detalle: !!saved.detalle };
+    S.gs = { url: GS_FIXED || saved.url || '', token: LS.get('tok') || '', me: LS.get('me') || null, detalle: saved.detalle2 !== false };
     return S.gs;
   };
-  function gsRemember() { const g = gsCfg(); LS.set('sheets', { url: GS_FIXED ? undefined : g.url, detalle: g.detalle }); if (g.token) { LS.set('tok', g.token); LS.set('me', g.me); } else { LS.del('tok'); LS.del('me'); } }
+  function gsRemember() { const g = gsCfg(); LS.set('sheets', { url: GS_FIXED ? undefined : g.url, detalle2: g.detalle }); if (g.token) { LS.set('tok', g.token); LS.set('me', g.me); } else { LS.del('tok'); LS.del('me'); } }
   const gsOn = () => { const g = gsCfg(); return !!(g.url && g.token); };
   const ROL_NOMBRE = { admin: 'Administración', gerencia: 'Gerencia', analista: 'Analista', consulta: 'Consulta' };
   // Qué puede hacer el usuario conectado (dentro de Claude o sin Sheets: todo)
   const puede = acc => { const g = gsCfg(); if (window.claude || !gsOn() || !g.me || !g.me.permisos) return true; return acc === 'usuarios' ? g.me.rol === 'admin' : acc === 'descargar' ? g.me.permisos.indexOf('getModel') >= 0 : g.me.permisos.indexOf(acc) >= 0; };
-  function aplicarPermisos() { document.body.classList.toggle('sin-carga', !puede('saveMonth')); document.body.classList.toggle('sin-descarga', !puede('descargar')); }
+  function aplicarPermisos() { const tu = document.getElementById('tabUsuarios'); if (tu) tu.style.display = !window.claude && gsOn() && puede('usuarios') ? '' : 'none'; document.body.classList.toggle('sin-carga', !puede('saveMonth')); document.body.classList.toggle('sin-descarga', !puede('descargar')); }
   async function gsCall(body, ms) {
     const g = gsCfg();
     const r = await withTimeout(fetch(g.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({}, body, { token: g.token })) }), ms || 120000);
@@ -2163,6 +2165,45 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   }
 
   // ---------- CARGAR ----------
+  let usersSeq = 0;
+async function renderUsuarios() {
+  const v = $('#v-usuarios');
+  v.innerHTML = `<div class="vhead"><div><h2>Usuarios y jerarquía</h2><p>Quién entra al dashboard, qué rol tiene y a quién reporta. Solo la cuenta de Administración puede cambiarlo.</p></div></div><div id="gsUsersBox"><div class="card"><div class="muted">Cargando usuarios desde Google Sheets…</div></div></div>`;
+  if (window.claude || !gsOn()) { $('#gsUsersBox').innerHTML = '<div class="card"><div class="muted">Los usuarios se administran en la página publicada (GitHub Pages o Vercel) con la sesión iniciada.</div></div>'; return; }
+  if (!puede('usuarios')) { $('#gsUsersBox').innerHTML = '<div class="card"><div class="muted">Solo la cuenta de Administración puede ver y cambiar los usuarios.</div></div>'; return; }
+  const seq = ++usersSeq;
+  const box = $('#gsUsersBox');
+  {
+    try {
+      const { usuarios } = await gsCall({ action: 'listUsers' }, 60000); if (seq !== usersSeq) return;
+      const me = gsCfg().me.usuario, opRol = sel => Object.keys(ROL_NOMBRE).map(r => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROL_NOMBRE[r]}</option>`).join('');
+      const opJefe = (sel, yo) => '<option value="">— nadie —</option>' + usuarios.filter(u => u.usuario !== yo).map(u => `<option value="${esc(u.usuario)}" ${u.usuario === sel ? 'selected' : ''}>${esc(u.nombre || u.usuario)}</option>`).join('');
+      // árbol de la jerarquía (a quién reporta cada persona)
+      const hijos = j => usuarios.filter(u => (u.jefe || '') === j || (j === '' && u.jefe && !usuarios.some(x => x.usuario === u.jefe)));
+      const arbol = (j, d) => hijos(j).map(u => `<div style="padding:5px 0 5px ${d * 22}px;${u.activo ? '' : 'opacity:.45'}">${d ? '└ ' : ''}<b>${esc(u.nombre || u.usuario)}</b> <span class="muted">· ${ROL_NOMBRE[u.rol]}</span></div>` + (d < 10 ? arbol(u.usuario, d + 1) : '')).join('');
+      box.innerHTML = `<div class="grid g2" style="gap:14px;align-items:start">
+          <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Jerarquía</h3>${arbol('', 0) || '<div class="muted">Sin usuarios</div>'}</div>
+          <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Qué puede hacer cada rol</h3><div class="note" style="line-height:1.7">
+            <b>Administración:</b> todo, más crear usuarios y asignar roles.<br><b>Gerencia:</b> ver todo, cargar y borrar meses, cambiar los supuestos de la meta, descargar Excel y presentaciones.<br><b>Analista:</b> ver todo, cargar meses y descargar. No borra meses ni cambia supuestos.<br><b>Consulta:</b> solo totales y gráficas del historial, sin detalle por cliente ni descargas.</div></div></div>
+        <div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Reporta a</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td>
+          <td>${u.usuario === me ? ROL_NOMBRE[u.rol] : `<select class="inp" style="padding:4px 8px" data-rol="${esc(u.usuario)}">${opRol(u.rol)}</select>`}</td>
+          <td><select class="inp" style="padding:4px 8px" data-jefe="${esc(u.usuario)}">${opJefe(u.jefe, u.usuario)}</select></td>
+          <td>${u.activo ? '<span class="chip up">activo</span>' : '<span class="chip down">inactivo</span>'}</td>
+          <td class="right">${u.usuario === me ? '' : `<button class="btn sm ghost" data-act="${esc(u.usuario)}" data-on="${u.activo ? 0 : 1}">${u.activo ? 'Desactivar' : 'Activar'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+        <form id="nuF" class="mt" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
+          <input class="inp" id="nuU" placeholder="usuario" autocomplete="off" autocapitalize="none"><input class="inp" id="nuN" placeholder="Nombre">
+          <select class="inp" id="nuR">${opRol('consulta')}</select><select class="inp" id="nuJ">${opJefe(me, '')}</select>
+          <input class="inp" id="nuP" type="password" placeholder="Contraseña temporal" autocomplete="new-password"><button class="btn pri sm" type="submit">Agregar usuario</button></form>
+        <div class="note">La persona entra con la contraseña temporal y el sistema le pide cambiarla.</div>`;
+      const upd = async (body, msg) => { try { await gsPost(Object.assign({ action: 'updateUser' }, body)); toast(msg); } catch (e) { toast(e.message, 5000); } renderUsuarios(); };
+      $$('[data-rol]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.rol, rol: x.value }, 'Rol actualizado'));
+      $$('[data-jefe]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.jefe, jefe: x.value }, 'Jerarquía actualizada'));
+      $$('[data-act]', box).forEach(b => b.onclick = () => upd({ usuario: b.dataset.act, activo: b.dataset.on === '1' }, b.dataset.on === '1' ? 'Usuario activado' : 'Usuario desactivado'));
+      $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), rol: $('#nuR', box).value, jefe: $('#nuJ', box).value, password: $('#nuP', box).value }); toast('Usuario agregado'); renderUsuarios(); } catch (er) { toast(er.message, 5000); } };
+    } catch (e) { box.innerHTML = `<div class="card"><div class="note" style="color:#f87171">No se pudieron cargar los usuarios: ${esc(e.message === 'timeout' ? 'Google tardó demasiado en responder' : e.message)}</div><button class="btn sm mt" id="usrRetry">Reintentar</button></div>`; $('#usrRetry').onclick = () => renderUsuarios(); }
+  }
+}
+
   function renderCargar() {
     const v = $('#v-cargar'); const reps = reports(); const have = new Set(reps.map(r => r.key));
     v.innerHTML = `<div class="vhead"><div><h2>Cargar reportes del mes</h2><p>Selecciona todos los Excel del cierre a la vez. El dashboard reconoce cada reporte por su código, detecta el mes y guarda los totales en tu historial. El detalle de clientes se procesa solo en tu navegador y no se guarda.</p></div></div>
@@ -2175,9 +2216,8 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
           <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">URL de la aplicación web (termina en /exec)${GS_FIXED ? ' · fija en index.html' : ''}</span><input class="inp" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(gsCfg().url)}" ${GS_FIXED ? 'readonly' : ''}></label>
           <div class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Sesión</span><div style="padding:9px 0">${gsOn() && gsCfg().me ? `<b>${esc(gsCfg().me.nombre || gsCfg().me.usuario)}</b> <span class="muted">(${esc(gsCfg().me.usuario)} · ${esc(ROL_NOMBRE[gsCfg().me.rol] || 'Administración')})</span>` : '<span class="muted">sin iniciar</span>'}</div></div>
         </div>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px"><input type="checkbox" id="gsDet" ${gsCfg().detalle ? 'checked' : ''} style="margin-top:3px"> <span>Guardar también el detalle por cliente (nombre, cédula, saldo, letra, cobrado). Permite reabrir meses anteriores y descargar el Excel GSF, las letras y la presentación sin volver a subir los reportes. Quien tenga acceso a la hoja verá esos datos.</span></label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px"><input type="checkbox" id="gsDet" ${gsCfg().detalle ? 'checked' : ''} style="margin-top:3px"> <span>Guardar también el detalle por cliente y los reportes originales del SIF. Permite reabrir meses anteriores, volver a descargar cada reporte y sacar el Excel GSF, las letras y la presentación sin volver a subirlos. Quien tenga acceso a la hoja verá esos datos.</span></label>
         <div class="tools mt"><button class="btn pri sm" id="gsSave">${gsOn() ? 'Probar conexión' : 'Conectar e iniciar sesión'}</button>${gsOn() ? '<button class="btn sm" id="gsPw">Cambiar mi contraseña</button>' : ''}${puede('usuarios') && gsOn() ? '<button class="btn sm" id="gsUsers">Usuarios y jerarquía</button>' : ''}${puede('saveMonth') ? `<button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button>` : ''}${!gsOn() || puede('usuarios') ? '<button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>' : ''}${gsOn() ? '<button class="btn sm ghost" id="gsOff">Cerrar sesión</button>' : ''}</div>
-        <div id="gsUsersBox"></div>
         <div class="note" id="gsMsg">${S.gsStatus && S.gsStatus !== 'ok' ? esc(S.gsStatus) : ''}</div>
         <details class="mt"><summary style="cursor:pointer;font-weight:600">Cómo crear la hoja (5 minutos)</summary><ol class="note" style="line-height:1.7">
           <li>Con tu cuenta de Google (por ejemplo proyectosrapiprestamos), crea un Google Sheet nuevo llamado "Historial dashboard cartera".</li>
@@ -2189,7 +2229,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         </ol><div class="note">Las contraseñas se guardan con sal y SHA-256 (1000 vueltas) en la hoja Usuarios; la sesión dura 30 días y tras 5 intentos fallidos hay que esperar 15 minutos. Si alguien olvida su contraseña: menú <b>Dashboard cartera → Permitir que un usuario cree una contraseña nueva</b>. Si cambias el código del Apps Script, usa <b>Implementar → Administrar implementaciones → Editar → Nueva versión</b> para que la URL siga igual.</div></details>
       </div>
       <div class="card mt"><h3>Historial guardado <small>${gsOn() && S.gsStatus === 'ok' ? 'en Google Sheets' : S.store ? 'en tu cuenta de Claude' : 'en este navegador'}</small></h3>
-        <div class="note" style="margin:-4px 0 12px">${S.store ? 'Se guarda en el almacenamiento privado de tu cuenta de Claude: solo tú lo ves, en cualquier dispositivo donde abras este dashboard.' : 'Se guarda en el almacenamiento local de este navegador (localStorage), en este equipo. No se sube a ningún servidor: otro navegador o dispositivo tiene su propio historial, y si borras los datos del navegador se pierde. Usa Exportar / Importar para pasarlo de un equipo a otro.'} Solo guarda los totales de cada mes (cartera, mora, recaudo, meta, cosechas, totales por patrono y oficial) y el tramo de mora de cada número de contrato, que sirve para ver quién cambió de tramo de un mes a otro. Nunca guarda nombres de clientes, cédulas ni saldos por cliente.</div>
+        <div class="note" style="margin:-4px 0 12px">${gsOn() && S.gsStatus === 'ok' ? 'Se guarda en tu hoja de Google "Historial dashboard cartera" (pestañas Meses, Clientes, Modelo y Archivos). Lo ves desde cualquier equipo con tu usuario.' : S.store ? 'Se guarda en el almacenamiento privado de tu cuenta de Claude: solo tú lo ves, en cualquier dispositivo donde abras este dashboard.' : 'Se guarda en el almacenamiento local de este navegador (localStorage), en este equipo. No se sube a ningún servidor: otro navegador o dispositivo tiene su propio historial, y si borras los datos del navegador se pierde. Usa Exportar / Importar para pasarlo de un equipo a otro.'} Solo guarda los totales de cada mes (cartera, mora, recaudo, meta, cosechas, totales por patrono y oficial) y el tramo de mora de cada número de contrato, que sirve para ver quién cambió de tramo de un mes a otro. Nunca guarda nombres de clientes, cédulas ni saldos por cliente.</div>
         <div class="tools"><button class="btn sm" id="histExp" ${months().length ? '' : 'disabled'}>Exportar historial (.json)</button><button class="btn sm" id="histImp">Importar historial</button><input type="file" id="histFile" accept=".json,application/json" hidden></div>
         <div id="histTbl"></div></div>`;
     const drop = $('#drop');
@@ -2211,37 +2251,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       } catch (e) { S.gsStatus = 'error: ' + e.message; gsMsg('<span style="color:#f87171">No se pudo conectar: ' + esc(e.message === 'SESION' ? 'la sesión venció, vuelve a entrar' : e.message) + '</span>'); }
     };
     $('#gsPw') && ($('#gsPw').onclick = () => changePwDialog(false).then(ok => ok && toast('Contraseña cambiada')));
-    $('#gsUsers') && ($('#gsUsers').onclick = () => renderUsers());
-    async function renderUsers() {
-      const box = $('#gsUsersBox'); box.innerHTML = '<div class="note">Cargando usuarios…</div>';
-      try {
-        const { usuarios } = await gsPost({ action: 'listUsers' });
-        const me = gsCfg().me.usuario, opRol = sel => Object.keys(ROL_NOMBRE).map(r => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROL_NOMBRE[r]}</option>`).join('');
-        const opJefe = (sel, yo) => '<option value="">— nadie —</option>' + usuarios.filter(u => u.usuario !== yo).map(u => `<option value="${esc(u.usuario)}" ${u.usuario === sel ? 'selected' : ''}>${esc(u.nombre || u.usuario)}</option>`).join('');
-        // árbol de la jerarquía (a quién reporta cada persona)
-        const hijos = j => usuarios.filter(u => (u.jefe || '') === j || (j === '' && u.jefe && !usuarios.some(x => x.usuario === u.jefe)));
-        const arbol = (j, d) => hijos(j).map(u => `<div style="padding:5px 0 5px ${d * 22}px;${u.activo ? '' : 'opacity:.45'}">${d ? '└ ' : ''}<b>${esc(u.nombre || u.usuario)}</b> <span class="muted">· ${ROL_NOMBRE[u.rol]}</span></div>` + (d < 10 ? arbol(u.usuario, d + 1) : '')).join('');
-        box.innerHTML = `<div class="grid g2 mt" style="gap:14px;align-items:start">
-            <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Jerarquía</h3>${arbol('', 0) || '<div class="muted">Sin usuarios</div>'}</div>
-            <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Qué puede hacer cada rol</h3><div class="note" style="line-height:1.7">
-              <b>Administración:</b> todo, más crear usuarios y asignar roles.<br><b>Gerencia:</b> ver todo, cargar y borrar meses, cambiar los supuestos de la meta, descargar Excel y presentaciones.<br><b>Analista:</b> ver todo, cargar meses y descargar. No borra meses ni cambia supuestos.<br><b>Consulta:</b> solo totales y gráficas del historial, sin detalle por cliente ni descargas.</div></div></div>
-          <div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Reporta a</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td>
-            <td>${u.usuario === me ? ROL_NOMBRE[u.rol] : `<select class="inp" style="padding:4px 8px" data-rol="${esc(u.usuario)}">${opRol(u.rol)}</select>`}</td>
-            <td><select class="inp" style="padding:4px 8px" data-jefe="${esc(u.usuario)}">${opJefe(u.jefe, u.usuario)}</select></td>
-            <td>${u.activo ? '<span class="chip up">activo</span>' : '<span class="chip down">inactivo</span>'}</td>
-            <td class="right">${u.usuario === me ? '' : `<button class="btn sm ghost" data-act="${esc(u.usuario)}" data-on="${u.activo ? 0 : 1}">${u.activo ? 'Desactivar' : 'Activar'}</button>`}</td></tr>`).join('')}</tbody></table></div>
-          <form id="nuF" class="mt" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
-            <input class="inp" id="nuU" placeholder="usuario" autocomplete="off" autocapitalize="none"><input class="inp" id="nuN" placeholder="Nombre">
-            <select class="inp" id="nuR">${opRol('consulta')}</select><select class="inp" id="nuJ">${opJefe(me, '')}</select>
-            <input class="inp" id="nuP" type="password" placeholder="Contraseña temporal" autocomplete="new-password"><button class="btn pri sm" type="submit">Agregar usuario</button></form>
-          <div class="note">La persona entra con la contraseña temporal y el sistema le pide cambiarla.</div>`;
-        const upd = async (body, msg) => { try { await gsPost(Object.assign({ action: 'updateUser' }, body)); toast(msg); } catch (e) { toast(e.message, 5000); } renderUsers(); };
-        $$('[data-rol]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.rol, rol: x.value }, 'Rol actualizado'));
-        $$('[data-jefe]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.jefe, jefe: x.value }, 'Jerarquía actualizada'));
-        $$('[data-act]', box).forEach(b => b.onclick = () => upd({ usuario: b.dataset.act, activo: b.dataset.on === '1' }, b.dataset.on === '1' ? 'Usuario activado' : 'Usuario desactivado'));
-        $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), rol: $('#nuR', box).value, jefe: $('#nuJ', box).value, password: $('#nuP', box).value }); toast('Usuario agregado'); renderUsers(); } catch (er) { toast(er.message, 5000); } };
-      } catch (e) { box.innerHTML = '<div class="note" style="color:#f87171">' + esc(e.message) + '</div>'; }
-    }
+    $('#gsUsers') && ($('#gsUsers').onclick = () => go('usuarios'));
     $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
     $('#gsPush') && ($('#gsPush').onclick = async () => {
       const ms = months(); let n = 0;
@@ -2327,7 +2337,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   });
 
   // ---------- navegación ----------
-  const VIEWS = { resumen: renderResumen, morosidad: renderMora, analisis: renderAnalisis, meta: renderMeta, ingresos: renderIngresos, excel: renderExcel, presentacion: renderPres, cuadre: renderCuadre, reportes: renderReportes, cargar: renderCargar };
+  const VIEWS = { resumen: renderResumen, morosidad: renderMora, analisis: renderAnalisis, meta: renderMeta, ingresos: renderIngresos, excel: renderExcel, presentacion: renderPres, cuadre: renderCuadre, reportes: renderReportes, cargar: renderCargar, usuarios: renderUsuarios };
   const rendered = {};
   function go(tab) {
     if (!VIEWS[tab]) tab = 'resumen';
