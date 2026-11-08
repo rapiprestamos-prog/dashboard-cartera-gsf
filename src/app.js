@@ -51,6 +51,10 @@
   };
   function gsRemember() { const g = gsCfg(); LS.set('sheets', { url: GS_FIXED ? undefined : g.url, detalle: g.detalle }); if (g.token) { LS.set('tok', g.token); LS.set('me', g.me); } else { LS.del('tok'); LS.del('me'); } }
   const gsOn = () => { const g = gsCfg(); return !!(g.url && g.token); };
+  const ROL_NOMBRE = { admin: 'Administración', gerencia: 'Gerencia', analista: 'Analista', consulta: 'Consulta' };
+  // Qué puede hacer el usuario conectado (dentro de Claude o sin Sheets: todo)
+  const puede = acc => { const g = gsCfg(); if (window.claude || !gsOn() || !g.me || !g.me.permisos) return true; return acc === 'usuarios' ? g.me.rol === 'admin' : acc === 'descargar' ? g.me.permisos.indexOf('getModel') >= 0 : g.me.permisos.indexOf(acc) >= 0; };
+  function aplicarPermisos() { document.body.classList.toggle('sin-carga', !puede('saveMonth')); document.body.classList.toggle('sin-descarga', !puede('descargar')); }
   async function gsCall(body, ms) {
     const g = gsCfg();
     const r = await withTimeout(fetch(g.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({}, body, { token: g.token })) }), ms || 120000);
@@ -116,7 +120,7 @@
     saveCfgT = setTimeout(async () => {
       const body = { meta: S.config.meta, patronoMap: S.config.patronoMap };
       LS.set('config', body);
-      if (gsOn()) { try { await gsPost({ action: 'saveConfig', config: body }); } catch (e) { toast('No se guardó la configuración en Sheets: ' + e.message); } }
+      if (gsOn()) { if (!puede('saveConfig')) return; try { await gsPost({ action: 'saveConfig', config: body }); } catch (e) { toast('No se guardó la configuración en Sheets: ' + e.message); } }
       else if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('config').set(body); } catch (e) { } }
     }, 700);
   }
@@ -127,6 +131,7 @@
     return false;
   }
   async function deleteMonth(ym) {
+    if (!puede('deleteMonth')) { toast('Tu rol no permite borrar meses.'); return; }
     delete S.history[ym]; delete S.models[ym];
     const all = LS.get('history') || {}; delete all[ym]; LS.set('history', all);
     if (gsOn()) { try { await gsPost({ action: 'deleteMonth', month: ym }); } catch (e) { toast('No se pudo borrar en Sheets: ' + e.message); } }
@@ -721,6 +726,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   const lastDayNum = ym => C.lastDay(ym).slice(8);
 
   async function saveFile(filename, blob) {
+    if (!puede('descargar')) { toast('Tu rol no permite descargar archivos.'); return; }
     if (!S.downloads) S.downloads = await capUse('downloads');
     if (S.downloads) {
       try { await S.downloads.save({ filename, data: blob }); toast('Listo: ' + filename); return; }
@@ -1049,10 +1055,10 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         <div class="note" style="margin:-4px 0 12px">Guarda el historial en una hoja de Google tuya, para verlo desde cualquier equipo. ${window.claude ? '<b style="color:#fbbf24">Dentro de Claude el navegador bloquea conexiones externas: esto funciona cuando abres el dashboard desde Vercel o como archivo.</b>' : ''}</div>
         <div class="grid g2" style="gap:10px">
           <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">URL de la aplicación web (termina en /exec)${GS_FIXED ? ' · fija en index.html' : ''}</span><input class="inp" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(gsCfg().url)}" ${GS_FIXED ? 'readonly' : ''}></label>
-          <div class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Sesión</span><div style="padding:9px 0">${gsOn() && gsCfg().me ? `<b>${esc(gsCfg().me.nombre || gsCfg().me.usuario)}</b> <span class="muted">(${esc(gsCfg().me.usuario)}${gsCfg().me.esAdmin ? ' · administración' : ''})</span>` : '<span class="muted">sin iniciar</span>'}</div></div>
+          <div class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Sesión</span><div style="padding:9px 0">${gsOn() && gsCfg().me ? `<b>${esc(gsCfg().me.nombre || gsCfg().me.usuario)}</b> <span class="muted">(${esc(gsCfg().me.usuario)} · ${esc(ROL_NOMBRE[gsCfg().me.rol] || 'Administración')})</span>` : '<span class="muted">sin iniciar</span>'}</div></div>
         </div>
         <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px"><input type="checkbox" id="gsDet" ${gsCfg().detalle ? 'checked' : ''} style="margin-top:3px"> <span>Guardar también el detalle por cliente (nombre, cédula, saldo, letra, cobrado). Permite reabrir meses anteriores y descargar el Excel GSF, las letras y la presentación sin volver a subir los reportes. Quien tenga acceso a la hoja verá esos datos.</span></label>
-        <div class="tools mt"><button class="btn pri sm" id="gsSave">${gsOn() ? 'Probar conexión' : 'Conectar e iniciar sesión'}</button>${gsOn() ? '<button class="btn sm" id="gsPw">Cambiar mi contraseña</button>' : ''}${gsOn() && gsCfg().me && gsCfg().me.esAdmin ? '<button class="btn sm" id="gsUsers">Usuarios</button>' : ''}<button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button><button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>${gsOn() ? '<button class="btn sm ghost" id="gsOff">Cerrar sesión</button>' : ''}</div>
+        <div class="tools mt"><button class="btn pri sm" id="gsSave">${gsOn() ? 'Probar conexión' : 'Conectar e iniciar sesión'}</button>${gsOn() ? '<button class="btn sm" id="gsPw">Cambiar mi contraseña</button>' : ''}${puede('usuarios') && gsOn() ? '<button class="btn sm" id="gsUsers">Usuarios y jerarquía</button>' : ''}${puede('saveMonth') ? `<button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button>` : ''}${!gsOn() || puede('usuarios') ? '<button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>' : ''}${gsOn() ? '<button class="btn sm ghost" id="gsOff">Cerrar sesión</button>' : ''}</div>
         <div id="gsUsersBox"></div>
         <div class="note" id="gsMsg">${S.gsStatus && S.gsStatus !== 'ok' ? esc(S.gsStatus) : ''}</div>
         <details class="mt"><summary style="cursor:pointer;font-weight:600">Cómo crear la hoja (5 minutos)</summary><ol class="note" style="line-height:1.7">
@@ -1071,7 +1077,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     const drop = $('#drop');
     drop.onclick = () => $('#fileIn').click();
     const ms = months().slice().reverse();
-    $('#histTbl').innerHTML = ms.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Mes</th><th class="n">Cartera</th><th class="n">PAR30</th><th class="n">Recaudo</th><th>Detalle</th><th></th></tr></thead><tbody>${ms.map(m => { const h = S.history[m]; return `<tr><td><b>${esc(h.label)}</b></td><td class="n">${money0(h.kpi.cartera)}</td><td class="n">${pct(h.kpi.par30Pct)}</td><td class="n">${money0(h.kpi.recaudo)}</td><td>${S.models[m] ? '<span class="chip up">cargado</span>' : '<span class="muted">solo totales</span>'}</td><td class="right"><button class="btn sm ghost" data-go="${m}">Ver</button> <button class="btn sm ghost" data-del="${m}">Borrar</button></td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted">Todavía no hay meses guardados.</div>';
+    $('#histTbl').innerHTML = ms.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Mes</th><th class="n">Cartera</th><th class="n">PAR30</th><th class="n">Recaudo</th><th>Detalle</th><th></th></tr></thead><tbody>${ms.map(m => { const h = S.history[m]; return `<tr><td><b>${esc(h.label)}</b></td><td class="n">${money0(h.kpi.cartera)}</td><td class="n">${pct(h.kpi.par30Pct)}</td><td class="n">${money0(h.kpi.recaudo)}</td><td>${S.models[m] ? '<span class="chip up">cargado</span>' : '<span class="muted">solo totales</span>'}</td><td class="right"><button class="btn sm ghost" data-go="${m}">Ver</button> ${puede('deleteMonth') ? `<button class="btn sm ghost" data-del="${m}">Borrar</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted">Todavía no hay meses guardados.</div>';
     const gsMsg = t => { const el = $('#gsMsg'); if (el) el.innerHTML = t; };
     $('#gsSave').onclick = async () => {
       const url = $('#gsUrl').value.trim();
@@ -1092,22 +1098,41 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       const box = $('#gsUsersBox'); box.innerHTML = '<div class="note">Cargando usuarios…</div>';
       try {
         const { usuarios } = await gsPost({ action: 'listUsers' });
-        box.innerHTML = `<div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td><td>${u.esAdmin ? 'Administración' : 'Usuario'}</td><td>${u.activo ? '<span class="chip up">activo</span>' : '<span class="chip down">inactivo</span>'}</td><td class="right">${u.usuario === gsCfg().me.usuario ? '' : `<button class="btn sm ghost" data-act="${esc(u.usuario)}" data-on="${u.activo ? 0 : 1}">${u.activo ? 'Desactivar' : 'Activar'}</button>`}</td></tr>`).join('')}</tbody></table></div>
-          <form id="nuF" class="mt" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;align-items:end"><input class="inp" id="nuU" placeholder="usuario" autocomplete="off"><input class="inp" id="nuN" placeholder="Nombre"><input class="inp" id="nuP" type="password" placeholder="Contraseña temporal" autocomplete="new-password"><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="nuA"> Administración <button class="btn pri sm" type="submit" style="margin-left:auto">Agregar</button></label></form>
-          <div class="note">La persona entra con esa contraseña temporal y el sistema le pide cambiarla.</div>`;
-        $$('[data-act]', box).forEach(b => b.onclick = async () => { try { await gsPost({ action: 'setActive', usuario: b.dataset.act, activo: b.dataset.on === '1' }); renderUsers(); } catch (e) { toast(e.message); } });
-        $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), password: $('#nuP', box).value, esAdmin: $('#nuA', box).checked }); toast('Usuario agregado'); renderUsers(); } catch (er) { toast(er.message, 5000); } };
+        const me = gsCfg().me.usuario, opRol = sel => Object.keys(ROL_NOMBRE).map(r => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROL_NOMBRE[r]}</option>`).join('');
+        const opJefe = (sel, yo) => '<option value="">— nadie —</option>' + usuarios.filter(u => u.usuario !== yo).map(u => `<option value="${esc(u.usuario)}" ${u.usuario === sel ? 'selected' : ''}>${esc(u.nombre || u.usuario)}</option>`).join('');
+        // árbol de la jerarquía (a quién reporta cada persona)
+        const hijos = j => usuarios.filter(u => (u.jefe || '') === j || (j === '' && u.jefe && !usuarios.some(x => x.usuario === u.jefe)));
+        const arbol = (j, d) => hijos(j).map(u => `<div style="padding:5px 0 5px ${d * 22}px;${u.activo ? '' : 'opacity:.45'}">${d ? '└ ' : ''}<b>${esc(u.nombre || u.usuario)}</b> <span class="muted">· ${ROL_NOMBRE[u.rol]}</span></div>` + (d < 10 ? arbol(u.usuario, d + 1) : '')).join('');
+        box.innerHTML = `<div class="grid g2 mt" style="gap:14px;align-items:start">
+            <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Jerarquía</h3>${arbol('', 0) || '<div class="muted">Sin usuarios</div>'}</div>
+            <div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Qué puede hacer cada rol</h3><div class="note" style="line-height:1.7">
+              <b>Administración:</b> todo, más crear usuarios y asignar roles.<br><b>Gerencia:</b> ver todo, cargar y borrar meses, cambiar los supuestos de la meta, descargar Excel y presentaciones.<br><b>Analista:</b> ver todo, cargar meses y descargar. No borra meses ni cambia supuestos.<br><b>Consulta:</b> solo totales y gráficas del historial, sin detalle por cliente ni descargas.</div></div></div>
+          <div class="tbl-wrap mt"><table class="t"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Reporta a</th><th>Estado</th><th></th></tr></thead><tbody>${usuarios.map(u => `<tr><td><b>${esc(u.usuario)}</b></td><td>${esc(u.nombre)}</td>
+            <td>${u.usuario === me ? ROL_NOMBRE[u.rol] : `<select class="inp" style="padding:4px 8px" data-rol="${esc(u.usuario)}">${opRol(u.rol)}</select>`}</td>
+            <td><select class="inp" style="padding:4px 8px" data-jefe="${esc(u.usuario)}">${opJefe(u.jefe, u.usuario)}</select></td>
+            <td>${u.activo ? '<span class="chip up">activo</span>' : '<span class="chip down">inactivo</span>'}</td>
+            <td class="right">${u.usuario === me ? '' : `<button class="btn sm ghost" data-act="${esc(u.usuario)}" data-on="${u.activo ? 0 : 1}">${u.activo ? 'Desactivar' : 'Activar'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+          <form id="nuF" class="mt" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
+            <input class="inp" id="nuU" placeholder="usuario" autocomplete="off" autocapitalize="none"><input class="inp" id="nuN" placeholder="Nombre">
+            <select class="inp" id="nuR">${opRol('consulta')}</select><select class="inp" id="nuJ">${opJefe(me, '')}</select>
+            <input class="inp" id="nuP" type="password" placeholder="Contraseña temporal" autocomplete="new-password"><button class="btn pri sm" type="submit">Agregar usuario</button></form>
+          <div class="note">La persona entra con la contraseña temporal y el sistema le pide cambiarla.</div>`;
+        const upd = async (body, msg) => { try { await gsPost(Object.assign({ action: 'updateUser' }, body)); toast(msg); } catch (e) { toast(e.message, 5000); } renderUsers(); };
+        $$('[data-rol]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.rol, rol: x.value }, 'Rol actualizado'));
+        $$('[data-jefe]', box).forEach(x => x.onchange = () => upd({ usuario: x.dataset.jefe, jefe: x.value }, 'Jerarquía actualizada'));
+        $$('[data-act]', box).forEach(b => b.onclick = () => upd({ usuario: b.dataset.act, activo: b.dataset.on === '1' }, b.dataset.on === '1' ? 'Usuario activado' : 'Usuario desactivado'));
+        $('#nuF', box).onsubmit = async e => { e.preventDefault(); try { await gsPost({ action: 'addUser', usuario: $('#nuU', box).value.trim().toLowerCase(), nombre: $('#nuN', box).value.trim(), rol: $('#nuR', box).value, jefe: $('#nuJ', box).value, password: $('#nuP', box).value }); toast('Usuario agregado'); renderUsers(); } catch (er) { toast(er.message, 5000); } };
       } catch (e) { box.innerHTML = '<div class="note" style="color:#f87171">' + esc(e.message) + '</div>'; }
     }
     $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
-    $('#gsPush').onclick = async () => {
+    $('#gsPush') && ($('#gsPush').onclick = async () => {
       const ms = months(); let n = 0;
       try { for (const m of ms) { loader(true, `Subiendo ${C.monthLabel(m)} a Google Sheets…`, Math.round(100 * n / ms.length)); await gsSaveMonth(S.history[m], S.models[m] && !S.models[m].fromSheets ? S.models[m].model : null); n++; } loader(false); toast(`${n} meses subidos a Google Sheets`); renderAll(); }
       catch (e) { loader(false); toast('Error al subir: ' + e.message, 6000); }
-    };
+    });
     const code = () => window.__APPS_SCRIPT__ || '';
-    $('#gsCode').onclick = () => saveFile('Code.gs.txt', new Blob([code()], { type: 'text/plain' }));
-    $('#gsCopy').onclick = async () => { try { await navigator.clipboard.writeText(code()); toast('Código copiado'); } catch (e) { toast('No se pudo copiar; usa Descargar'); } };
+    $('#gsCode') && ($('#gsCode').onclick = () => saveFile('Code.gs.txt', new Blob([code()], { type: 'text/plain' })));
+    $('#gsCopy') && ($('#gsCopy').onclick = async () => { try { await navigator.clipboard.writeText(code()); toast('Código copiado'); } catch (e) { toast('No se pudo copiar; usa Descargar'); } });
     $('#gsOff') && ($('#gsOff').onclick = () => window.gsfLogout());
     $('#histExp').onclick = () => { const out = {}; months().forEach(m => out[m] = S.history[m]); saveFile(`Historial dashboard cartera ${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify({ tipo: 'historial-dashboard-cartera', v: 1, meses: out, config: S.config }, null, 1)], { type: 'application/json' })); };
     $('#histImp').onclick = () => $('#histFile').click();
@@ -1117,6 +1142,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   }
 
   async function handleFiles(files) {
+    if (!puede('saveMonth')) { toast('Tu rol solo permite consultar. Pide a Administración que te cambie el rol para cargar reportes.', 6000); return; }
     files = files.filter(f => /\.xlsx?$/i.test(f.name)); if (!files.length) return;
     loader(true, 'Leyendo reportes…', 5);
     try {
@@ -1200,7 +1226,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   function renderAll() {
     renderStamp++; renderMonthSel(); go(S.tab);
     const ym = S.current;
-    if (ym && !S.models[ym] && S.gsDetalle[ym] && gsOn() && !gsLoading[ym]) {
+    if (ym && !S.models[ym] && S.gsDetalle[ym] && gsOn() && puede('getModel') && !gsLoading[ym]) {
       gsLoading[ym] = true; loader(true, 'Trayendo el detalle de ' + C.monthLabel(ym) + ' desde Google Sheets…', 50);
       gsLoadModel(ym).then(md => { loader(false); if (md) { S.models[ym] = { model: md, reports: [], fromSheets: true }; if (S.current === ym) renderAll(); } })
         .catch(e => { loader(false); toast('No se pudo traer el detalle: ' + e.message, 6000); }).finally(() => { gsLoading[ym] = false; });
@@ -1245,7 +1271,6 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
           <button class="btn pri" id="lkB" type="submit" style="justify-content:center">Entrar</button>
           <div class="note" id="lkM" style="text-align:center;min-height:18px"></div>
           ${GS_FIXED ? '' : `<button type="button" class="btn sm ghost" id="lkChg" style="justify-content:center;${askUrl ? 'display:none' : ''}">Usar otra base de datos</button>`}
-          <button type="button" class="btn sm ghost" id="lkCode" style="justify-content:center">Descargar el código de Apps Script</button>
         </form>`);
       const msg = t => $('#lkM', el).innerHTML = t;
       let mode = 'login';
@@ -1257,9 +1282,12 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         $('#lkT', el).textContent = m === 'setup' ? 'Primera vez: crea la cuenta de administración (contraseña de mínimo 8 caracteres).' : m === 'crear' ? 'Crea tu contraseña nueva (mínimo 8 caracteres).' : 'Inicia sesión para entrar.';
         $('#lkB', el).textContent = m === 'setup' ? 'Crear cuenta y entrar' : m === 'crear' ? 'Crear contraseña y entrar' : 'Entrar';
       };
-      const probe = async () => { try { const st = await gsCall({ action: 'setupStatus' }, 30000); if (st.necesitaConfiguracion) setMode('setup'); } catch (e) { msg(red('No se pudo conectar con Apps Script: ' + e.message)); } };
+      const probe = async () => {
+        $('#lkB', el).disabled = true; $('#lkT', el).textContent = 'Conectando…';
+        try { const st = await gsCall({ action: 'setupStatus' }, 30000); setMode(st.necesitaConfiguracion ? 'setup' : 'login'); } catch (e) { setMode('login'); msg(red('No se pudo conectar con Apps Script: ' + e.message)); }
+        $('#lkB', el).disabled = false;
+      };
       $('#lkChg', el) && ($('#lkChg', el).onclick = () => { $('#lkUrl', el).style.display = ''; $('#lkUrl', el).focus(); });
-      $('#lkCode', el).onclick = () => { const b = new Blob([window.__APPS_SCRIPT__ || ''], { type: 'text/plain' }); const u = URL.createObjectURL(b); const x = document.createElement('a'); x.href = u; x.download = 'Code.gs.txt'; document.body.appendChild(x); x.click(); x.remove(); };
       $('#lkUrl', el).onchange = () => { const u = $('#lkUrl', el).value.trim(); if (okUrl(u)) { g.url = u; gsRemember(); probe(); } };
       $('#lkF', el).onsubmit = async e => {
         e.preventDefault();
@@ -1308,6 +1336,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     const h = location.hash.slice(1); S.tab = VIEWS[h] ? h : 'resumen';
     renderAll();
     if (!window.claude && gsOn()) $('#btnLogout').style.display = '';
+    aplicarPermisos();
     capUse('downloads').then(d => S.downloads = d);
   })();
 })();

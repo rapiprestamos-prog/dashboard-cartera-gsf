@@ -18,7 +18,20 @@
 var HOJA_ID = '';  // opcional: ID del Sheet si el script no está dentro de la hoja
 var AJUSTES = { SESION_DIAS: 30, ITERACIONES: 1000, INTENTOS: 5, ESPERA_MIN: 15 };
 var PARTE = 45000; // caracteres por celda (el límite de Sheets es 50.000)
-var COLS_USUARIOS = ['usuario', 'nombre', 'salt', 'hash', 'activo', 'esAdmin', 'debeCambiar', 'creado'];
+var COLS_USUARIOS = ['usuario', 'nombre', 'salt', 'hash', 'activo', 'esAdmin', 'debeCambiar', 'creado', 'rol', 'jefe'];
+/* Jerarquía de roles (de mayor a menor) y lo que puede hacer cada uno:
+   admin     → todo, más crear usuarios y asignar roles
+   gerencia  → ver todo, cargar meses, borrar meses, cambiar supuestos de la meta, descargar Excel y presentaciones
+   analista  → ver todo, cargar meses y descargar (no borra meses ni cambia supuestos)
+   consulta  → solo ve los totales y gráficas del historial (sin detalle por cliente ni descargas) */
+var ROLES = ['admin', 'gerencia', 'analista', 'consulta'];
+var PERMISOS = {
+  admin: ['list', 'getModel', 'getConfig', 'saveMonth', 'deleteMonth', 'saveConfig'],
+  gerencia: ['list', 'getModel', 'getConfig', 'saveMonth', 'deleteMonth', 'saveConfig'],
+  analista: ['list', 'getModel', 'getConfig', 'saveMonth'],
+  consulta: ['list', 'getConfig']
+};
+function rolDe_(u) { return u.esAdmin === 'TRUE' ? 'admin' : (ROLES.indexOf(u.rol) > 0 ? u.rol : 'consulta'); }
 var COLS_SESIONES = ['huella', 'usuario', 'creado', 'ultimo', 'vence'];
 
 function libro_() { return HOJA_ID ? SpreadsheetApp.openById(HOJA_ID) : SpreadsheetApp.getActiveSpreadsheet(); }
@@ -30,6 +43,7 @@ function err_(m) { var e = new Error(m); e.usuario = true; return e; }
 /* ---------- tablas simples por encabezado ---------- */
 function tabla_(nombre, cols) {
   var sh = hoja_(nombre, cols), n = sh.getLastRow();
+  if (sh.getLastColumn() < cols.length) sh.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold').setBackground('#0f2a52').setFontColor('#ffffff');
   var vals = n > 1 ? sh.getRange(2, 1, n - 1, cols.length).getValues() : [];
   return { sh: sh, objs: vals.map(function (r) { var o = {}; cols.forEach(function (c, i) { o[c] = r[i] === true ? 'TRUE' : r[i] === false ? 'FALSE' : String(r[i]); }); return o; }) };
 }
@@ -38,7 +52,7 @@ function fila_(cols, o) { return cols.map(function (c) { return o[c] === undefin
 function usuarios_() { return tabla_('Usuarios', COLS_USUARIOS); }
 function usuario_(u) { u = String(u || '').trim().toLowerCase(); var T = usuarios_(); for (var i = 0; i < T.objs.length; i++) if (T.objs[i].usuario.toLowerCase() === u) return { T: T, i: i, u: T.objs[i] }; return null; }
 function guardarUsuario_(T, i, o) { T.sh.getRange(i + 2, 1, 1, COLS_USUARIOS.length).setNumberFormat('@').setValues([fila_(COLS_USUARIOS, o)]); }
-function publico_(u) { return { usuario: u.usuario, nombre: u.nombre, esAdmin: u.esAdmin === 'TRUE', activo: u.activo === 'TRUE' }; }
+function publico_(u) { var r = rolDe_(u); return { usuario: u.usuario, nombre: u.nombre, rol: r, jefe: u.jefe || '', esAdmin: r === 'admin', activo: u.activo === 'TRUE', permisos: PERMISOS[r] }; }
 
 /* ---------- sesiones (30 días) ---------- */
 function sesionCrear_(usuario) {
@@ -77,7 +91,7 @@ var PUBLICAS = {
     if (!String(b.nombre || '').trim()) throw err_('Escribe tu nombre.');
     if (clave.length < 8) throw err_('La contraseña debe tener al menos 8 caracteres.');
     var salt = uuid_();
-    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: 'TRUE', debeCambiar: 'FALSE', creado: new Date().toISOString() });
+    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: 'TRUE', debeCambiar: 'FALSE', creado: new Date().toISOString(), rol: 'admin', jefe: '' });
     return { ok: true };
   },
   login: function (b) {
@@ -126,19 +140,34 @@ var PRIVADAS = {
     if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) throw err_('Usuario no válido (3-30 letras minúsculas, números, punto o guion).');
     if (usuario_(usuario)) throw err_('Ese usuario ya existe.');
     if (clave.length < 8) throw err_('La contraseña temporal debe tener al menos 8 caracteres.');
-    var salt = uuid_();
-    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre || usuario).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: b.esAdmin ? 'TRUE' : 'FALSE', debeCambiar: 'TRUE', creado: new Date().toISOString() });
+    var rol = rolValido_(b.rol), jefe = jefeValido_(usuario, b.jefe), salt = uuid_();
+    agregar_(usuarios_().sh, COLS_USUARIOS, { usuario: usuario, nombre: String(b.nombre || usuario).trim().slice(0, 80), salt: salt, hash: hashClave_(salt, clave), activo: 'TRUE', esAdmin: rol === 'admin' ? 'TRUE' : 'FALSE', debeCambiar: 'TRUE', creado: new Date().toISOString(), rol: rol, jefe: jefe });
     return { ok: true };
   },
-  setActive: function (b, me) {
+  updateUser: function (b, me) {
     soloAdmin_(me); var r = usuario_(b.usuario); if (!r) throw err_('No existe ese usuario.');
-    if (r.u.usuario === me.usuario) throw err_('No puedes desactivar tu propia cuenta.');
-    r.u.activo = b.activo ? 'TRUE' : 'FALSE'; guardarUsuario_(r.T, r.i, r.u);
-    if (!b.activo) sesionesBorrar_(function (s) { return s.usuario.toLowerCase() === r.u.usuario.toLowerCase(); });
+    var propio = r.u.usuario.toLowerCase() === me.usuario.toLowerCase();
+    if (b.rol !== undefined) { var rol = rolValido_(b.rol); if (propio && rol !== 'admin') throw err_('No puedes quitarte tu propio rol de administración. Pídeselo a otra persona administradora.'); r.u.rol = rol; r.u.esAdmin = rol === 'admin' ? 'TRUE' : 'FALSE'; }
+    if (b.jefe !== undefined) r.u.jefe = jefeValido_(r.u.usuario.toLowerCase(), b.jefe);
+    if (b.activo !== undefined) {
+      if (propio && !b.activo) throw err_('No puedes desactivar tu propia cuenta.');
+      r.u.activo = b.activo ? 'TRUE' : 'FALSE';
+      if (!b.activo) sesionesBorrar_(function (s) { return s.usuario.toLowerCase() === r.u.usuario.toLowerCase(); });
+    }
+    guardarUsuario_(r.T, r.i, r.u);
     return { ok: true };
-  }
+  },
+  setActive: function (b, me) { return PRIVADAS.updateUser({ usuario: b.usuario, activo: !!b.activo }, me); }
 };
-function soloAdmin_(me) { if (me.esAdmin !== 'TRUE') throw err_('Solo la cuenta de administración puede hacer esto.'); }
+function rolValido_(r) { r = String(r || 'consulta'); if (ROLES.indexOf(r) < 0) throw err_('Rol no válido.'); return r; }
+function jefeValido_(usuario, jefe) {
+  jefe = String(jefe || '').trim().toLowerCase(); if (!jefe) return '';
+  if (jefe === usuario) throw err_('Una persona no puede reportarse a sí misma.');
+  var x = jefe, guard = 0;
+  while (x && guard++ < 50) { var p = usuario_(x); if (!p) throw err_('La persona a quien reporta no existe.'); if (x === usuario) throw err_('Esa relación crea un círculo en la jerarquía.'); x = String(p.u.jefe || '').toLowerCase(); }
+  return jefe;
+}
+function soloAdmin_(me) { if (rolDe_(me) !== 'admin') throw err_('Solo la cuenta de administración puede hacer esto.'); }
 
 function manejar_(b) {
   b = b || {};
@@ -146,6 +175,8 @@ function manejar_(b) {
   if (!PRIVADAS[b.action]) throw err_('Acción desconocida.');
   var me = sesionUsuario_(b.token);
   if (me.debeCambiar === 'TRUE' && b.action !== 'changePassword' && b.action !== 'ping') throw err_('DEBE_CAMBIAR');
+  var libres = ['ping', 'changePassword', 'listUsers', 'addUser', 'updateUser', 'setActive'];
+  if (libres.indexOf(b.action) < 0 && PERMISOS[rolDe_(me)].indexOf(b.action) < 0) throw err_('Tu rol (' + rolDe_(me) + ') no permite esta acción.');
   return { ok: true, data: PRIVADAS[b.action](b, me) };
 }
 

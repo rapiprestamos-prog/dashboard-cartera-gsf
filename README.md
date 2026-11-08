@@ -55,6 +55,17 @@ Instalación (cuenta de Google proyectosrapiprestamos):
 5. Pega la URL en `index.html`, donde dice `PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT` (o reconstruye con `GS_URL="https://script.google.com/macros/s/…/exec" python3 build.py`).
 6. La primera vez que abras la página te pide **crear la cuenta de administración**. Desde Cargar / historial → **Usuarios** puedes dar acceso a otras personas con una contraseña temporal (se les pide cambiarla al entrar).
 
+Jerarquía de roles (Cargar / historial → **Usuarios y jerarquía**; cada persona tiene un rol y a quién reporta):
+
+| Rol | Puede |
+|---|---|
+| Administración | Todo, más crear usuarios y asignar roles |
+| Gerencia | Ver todo, cargar y borrar meses, cambiar supuestos de la meta, descargar Excel y presentaciones |
+| Analista | Ver todo, cargar meses y descargar (no borra meses ni cambia supuestos) |
+| Consulta | Solo totales y gráficas del historial, sin detalle por cliente ni descargas |
+
+Los permisos los aplica el Apps Script, no solo la página.
+
 Si alguien olvida su contraseña: menú **Dashboard cartera → Permitir que un usuario cree una contraseña nueva**. Si cambias el código del Apps Script, usa Implementar → Administrar implementaciones → Editar → Nueva versión para que la URL no cambie.
 
 Tamaño: con detalle, cada mes ocupa unos 130 KB comprimidos en la hoja Modelo y 271 filas en Clientes.

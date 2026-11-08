@@ -163,3 +163,7 @@ body.dragging .dropall{display:grid}
 
 .lock{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:radial-gradient(800px 500px at 20% 0%,rgba(56,189,248,.18),transparent 60%),radial-gradient(700px 500px at 100% 100%,rgba(129,140,248,.2),transparent 60%),#060a18;padding:16px}
 .lockbox{width:min(400px,100%);padding:26px 22px}
+
+/* permisos por rol */
+body.sin-carga #btnUpload,body.sin-carga #drop{display:none!important}
+body.sin-descarga #dlGsf,body.sin-descarga #dlAna,body.sin-descarga #metaXls,body.sin-descarga #letXls,body.sin-descarga #letPpt,body.sin-descarga #pptBtn,body.sin-descarga #histExp{display:none!important}
