@@ -892,8 +892,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       ...(model() ? [`<div class="slide"><div class="band">10 mayores clientes<small>suman ${pct(sumPct(C.topClients(model(), 10)))} de la cartera · tramo de mora y estado</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10))}</div>${foot('')}</div>`,
         `<div class="slide"><div class="band">10 mayores clientes<small>suman ${pct(sumPct(C.topClients(model(), 10)))} de la cartera</small></div><div class="body"><div id="sP7b" class="schart"></div></div>${foot('')}</div>`,
         `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>suman ${pct(sumPct(C.topClients(model(), 10, g => g.bucket < 5)))} de la cartera · los más grandes que aún se pueden gestionar</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10, g => g.bucket < 5), true)}</div>${foot('')}</div>`,
-        `<div class="slide"><div class="band">Concentración: 10 mayores clientes fuera de 365 Mas<small>suman ${pct(sumPct(C.topClients(model(), 10, g => g.bucket < 5)))} de la cartera</small></div><div class="body"><div id="sP7c" class="schart"></div></div>${foot('')}</div>`,
-        `<div class="slide"><div class="band">Cómo se calcula la concentración<small>10 mayores clientes fuera de 365 Mas</small></div><div class="body">${concExplicaHtml(model())}</div>${foot('')}</div>`] : []),
+        `<div class="slide"><div class="band">Concentración: 10 mayores clientes fuera de 365 Mas<small>suman ${pct(sumPct(C.topClients(model(), 10, g => g.bucket < 5)))} de la cartera</small></div><div class="body"><div id="sP7c" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Cosechas y antigüedad de pago<small>saldo y PAR30 por año de desembolso</small></div><div class="body" style="display:grid;grid-template-columns:1.3fr 1fr;gap:3%"><div id="sP8" class="schart"></div><div id="sP9" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Vencimientos y tasas<small>tasa promedio ${a.deep.tasaProm.toFixed(2)}% · plazo ${Math.round(a.deep.plazoProm)} meses</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP11a" class="schart"></div><div id="sP11b" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">Letras del mes<small>vencieron vs cobrado · ${esc(a.label)}</small></div><div class="body">${letrasSlideHtml()}</div>${foot('')}</div>`] : []),
@@ -1063,22 +1062,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
           s = pptx.addSlide({ masterName: 'M' }); title(s, 'Concentración: 10 mayores clientes fuera de 365 Mas', `suman ${pct(sumPct(top10f))} de la cartera`);
           s.addChart(pptx.ChartType.bar, [{ name: '% de la cartera', labels: cc.map(x => x.k), values: cc.map(x => Math.round(x.pct * 1000) / 10) }], { x: 0.5, y: 1.2, w: 12.3, h: 5.2, barDir: 'col', chartColors: ['6366F1'], valAxisLabelFormatCode: '0"%"', showValue: true, dataLabelFormatCode: '0.0"%"', dataLabelColor: '0F1F3D', showLegend: false, catAxisLabelFontSize: 13, valAxisLabelFontSize: 11, dataLabelFontSize: 13, showTitle: true, title: '% de la cartera en los mayores clientes fuera de 365 Mas', titleFontSize: 14, titleColor: '0F1F3D' });
           s.addText(`Top N = saldo de los N mayores clientes que no están en 365 Mas ÷ cartera total (${money0(carteraTotal(md))}).   ` + cc.map(x => `${x.k}: ${pct(x.pct)}`).join(' · '), { x: 0.5, y: 6.45, w: 12.3, h: 0.4, fontSize: 12, color: BLUE, bold: true });
-          const rows = concExplica(md), tot = carteraTotal(md);
-          s = pptx.addSlide({ masterName: 'M' }); title(s, 'Cómo se calcula la concentración', '10 mayores clientes fuera de 365 Mas');
-          s.addText([
-            { text: 'Paso a paso', options: { bold: true, fontSize: 15, breakLine: true } },
-            { text: `1. Se suma el saldo de todos los préstamos: cartera total ${money0(tot)} (${int(md.loans.length)} préstamos).`, options: { breakLine: true } },
-            { text: '2. Se agrupan los préstamos por cliente (misma cédula); si tiene varios, se suman.', options: { breakLine: true } },
-            { text: '3. Se quitan los clientes cuyo peor préstamo está en 365 Mas.', options: { breakLine: true } },
-            { text: `4. Los que quedan se ordenan de mayor a menor saldo. El #1 es ${top10f[0] ? top10f[0].nombre : '—'} con ${money0(top10f[0] ? top10f[0].saldo : 0)}.`, options: { breakLine: true } },
-            { text: '5. Top N = saldo de los N primeros de esa lista ÷ cartera total.', options: { breakLine: true } },
-            { text: ' ', options: { breakLine: true } },
-            { text: `Ejemplo: Top 1 = ${money0(rows[0] ? rows[0].saldo : 0)} ÷ ${money0(tot)} = ${pct(rows[0] ? rows[0].pct : 0)} de la cartera.`, options: { bold: true, color: '3730A3', breakLine: true } },
-            { text: `Lectura: ${pct(rows.length ? rows[rows.length - 1].pct : 0)} de toda la cartera está en solo ${rows.length ? rows[rows.length - 1].k.replace('Top ', '') : 0} clientes que todavía se pueden gestionar.`, options: { color: '3730A3' } }
-          ], { x: 0.5, y: 1.2, w: 5.6, h: 5.3, fontSize: 13, color: '0F1F3D', valign: 'top', paraSpaceAfter: 6 });
-          s.addTable([[H('Barra'), H('Clientes que suma'), H('Saldo sumado'), H('÷ Cartera total'), H('= %')], ...rows.map(r => [{ text: r.k, options: { bold: true } }, r.quienes, money0(r.saldo), money0(r.tot), { text: pct(r.pct), options: { bold: true } }])],
-            { x: 6.4, y: 1.25, w: 6.5, fontSize: 11, rowH: 0.5, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: [0.8, 2.5, 1.15, 1.25, 0.8], fill: { color: 'FFFFFF' }, color: '0F1F3D' });
-          s.addText('Los nombres y saldos de cada cliente están en la tabla "10 mayores clientes fuera de 365 Mas".', { x: 6.4, y: 4.3, w: 6.5, h: 0.4, fontSize: 10, color: '64748B' }); }
+         }
       }
       if (a.deep) {
         const vin = a.deep.byVintage, lp = a.deep.byLastPay;
