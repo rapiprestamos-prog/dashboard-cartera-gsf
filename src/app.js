@@ -889,11 +889,10 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       `<div class="slide"><div class="band">Calidad de la cartera<small>saldo por tramo de mora</small></div><div class="body"><div id="sP2" class="schart"></div></div>${foot(4)}</div>`,
       `<div class="slide"><div class="band">Dónde se concentra el riesgo<small>top patronos por PAR30</small></div><div class="body"><div id="sP3" class="schart"></div></div>${foot(5)}</div>`,
       `<div class="slide"><div class="band">Cobros vs meta<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1.6fr;gap:3%"><div id="sP4a" class="schart"></div><div id="sP4b" class="schart"></div></div>${foot(6)}</div>`,
-      ...(a.deep ? [`<div class="slide"><div class="band">Concentración: mayores clientes<small>${pct(a.deep.top25Pct)} de la cartera en 25 clientes</small></div><div class="body"><div id="sP7" class="schart"></div></div>${foot('')}</div>`] : []),
-      ...(model() ? [`<div class="slide"><div class="band">10 mayores clientes<small>tramo de mora y estado</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10))}</div>${foot('')}</div>`,
-        `<div class="slide"><div class="band">10 mayores clientes<small>saldo y tramo de mora</small></div><div class="body"><div id="sP7b" class="schart"></div></div>${foot('')}</div>`,
-        `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>los más grandes que aún se pueden gestionar</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10, g => g.bucket < 5), true)}</div>${foot('')}</div>`,
-        `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>saldo y tramo de mora</small></div><div class="body"><div id="sP7c" class="schart"></div></div>${foot('')}</div>`] : []),
+      ...(model() ? [`<div class="slide"><div class="band">10 mayores clientes<small>suman ${pct(sumPct(C.topClients(model(), 10)))} de la cartera · tramo de mora y estado</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10))}</div>${foot('')}</div>`,
+        `<div class="slide"><div class="band">10 mayores clientes<small>suman ${pct(sumPct(C.topClients(model(), 10)))} de la cartera</small></div><div class="body"><div id="sP7b" class="schart"></div></div>${foot('')}</div>`,
+        `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>suman ${pct(sumPct(C.topClients(model(), 10, g => g.bucket < 5)))} de la cartera · los más grandes que aún se pueden gestionar</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10, g => g.bucket < 5), true)}</div>${foot('')}</div>`,
+        `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>suman ${pct(sumPct(C.topClients(model(), 10, g => g.bucket < 5)))} de la cartera</small></div><div class="body"><div id="sP7c" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Cosechas y antigüedad de pago<small>saldo y PAR30 por año de desembolso</small></div><div class="body" style="display:grid;grid-template-columns:1.3fr 1fr;gap:3%"><div id="sP8" class="schart"></div><div id="sP9" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Vencimientos y tasas<small>tasa promedio ${a.deep.tasaProm.toFixed(2)}% · plazo ${Math.round(a.deep.plazoProm)} meses</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP11a" class="schart"></div><div id="sP11b" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">Letras del mes<small>vencieron vs cobrado · ${esc(a.label)}</small></div><div class="body">${letrasSlideHtml()}</div>${foot('')}</div>`] : []),
@@ -947,6 +946,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   function gestionSlideHtml() {
     return slideTable(['Cliente', 'Patrono', 'Oficial', 'Tramo', 'Meta', 'Cobrado', 'Falta'], gestionRows(10).map(x => [esc(x.l.nombre), esc(String(x.l.patrono).slice(0, 26)), esc(x.l.oficial), `<span style="color:${x.l.bucket > 1 ? '#dc2626' : x.l.bucket ? '#d97706' : '#16a34a'};font-weight:600">${x.l.clas}</span>`, money0(x.meta), money0(x.l.pagadoMes), `<b>${money0(x.falta)}</b>`]), [4, 5, 6]);
   }
+  const sumPct = top => top.reduce((x, t) => x + t.pct, 0);
   const dmyS = d => d && d.slice(0, 4) > '1900' ? d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4) : 'Sin pagos';
   const colTramo = t => t.bucket >= 5 ? '#dc2626' : t.bucket > 1 ? '#ea580c' : t.bucket === 1 ? '#ca8a04' : '#16a34a';
   function topSlideHtml(top, conRankTotal) {
@@ -968,9 +968,9 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       chart('sP4b', Object.assign({}, light, { tooltip: tip({ axisPointer: { type: 'line' } }), grid: { left: 60, right: 20, top: 20, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: rd.map(x => x.d.slice(8, 10) + '/' + x.d.slice(5, 7)), boundaryGap: false }, ax), yAxis: Object.assign({ type: 'value', axisLabel: { color: '#334155', formatter: v => short(v) } }, { splitLine: ax.splitLine }), series: [{ type: 'line', smooth: true, showSymbol: false, data: rd.map(x => (acc += x.v)), lineStyle: { width: 3, color: '#1d4ed8' }, areaStyle: { color: 'rgba(29,78,216,.12)' }, markLine: { symbol: 'none', lineStyle: { color: '#f59e0b', type: 'dashed', width: 2 }, label: { formatter: 'Meta ' + short(D.mf.meta), color: '#b45309' }, data: [{ yAxis: D.mf.meta }] } }] }));
     }
     const colTr = b => b >= 5 ? '#dc2626' : b > 1 ? '#ea580c' : b === 1 ? '#ca8a04' : '#16a34a';
-    const topBars = (id, titulo, top) => chart(id, Object.assign({}, light, { title: { text: titulo, left: 0, top: 0, textStyle: { color: '#0f1f3d', fontSize: 14, fontWeight: 700 } }, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => { const t = top[p[0].dataIndex]; return `<b>${esc(t.nombre)}</b><br>${money0(t.saldo)} · ${t.clas} · ${t.estado}`; } },
-      grid: { left: 270, right: 120, top: 40, bottom: 10 }, xAxis: { type: 'value', show: false }, yAxis: Object.assign({ type: 'category', inverse: true, data: top.map(t => `${t.rankTotal}. ${t.nombre.length > 28 ? t.nombre.slice(0, 27) + '…' : t.nombre}`) }, ax, { axisLabel: { color: '#334155', fontSize: 12 } }),
-      series: [{ type: 'bar', barWidth: '60%', data: top.map(t => ({ value: Math.round(t.saldo), itemStyle: { color: colTr(t.bucket), borderRadius: [0, 4, 4, 0] } })), label: { show: true, position: 'right', color: '#0f1f3d', fontSize: 12, formatter: p => money0(p.value) + '  ' + top[p.dataIndex].clas } }] }));
+    const topBars = (id, titulo, top) => chart(id, Object.assign({}, light, { title: { text: `${titulo}: suman ${pct(sumPct(top))} de la cartera`, left: 0, top: 0, textStyle: { color: '#0f1f3d', fontSize: 14, fontWeight: 700 } }, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => { const t = top[p[0].dataIndex]; return `<b>${esc(t.nombre)}</b><br>${money0(t.saldo)} · ${t.clas} · ${t.estado}`; } },
+      grid: { left: 270, right: 230, top: 40, bottom: 10 }, xAxis: { type: 'value', show: false }, yAxis: Object.assign({ type: 'category', inverse: true, data: top.map(t => `${t.rankTotal}. ${t.nombre.length > 28 ? t.nombre.slice(0, 27) + '…' : t.nombre}`) }, ax, { axisLabel: { color: '#334155', fontSize: 12 } }),
+      series: [{ type: 'bar', barWidth: '60%', data: top.map(t => ({ value: Math.round(t.saldo), itemStyle: { color: colTr(t.bucket), borderRadius: [0, 4, 4, 0] } })), label: { show: true, position: 'right', color: '#0f1f3d', fontSize: 12, formatter: p => `${money0(p.value)} · ${pct(top[p.dataIndex].pct)} de la cartera · ${top[p.dataIndex].clas}` } }] }));
     if (on('sP7b') && model()) topBars('sP7b', '10 mayores clientes', C.topClients(model(), 10));
     if (on('sP7c') && model()) topBars('sP7c', '10 mayores clientes fuera de 365 Mas', C.topClients(model(), 10, g => g.bucket < 5));
     if (on('sP7') && a.deep) chart('sP7', Object.assign({}, light, { title: { text: '% de la cartera en los mayores clientes', left: 0, top: 0, textStyle: { color: '#0f1f3d', fontSize: 14, fontWeight: 700 } }, grid: { left: 60, right: 20, top: 44, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: a.deep.pareto.map(p => 'Top ' + p.n) }, ax), yAxis: Object.assign({ type: 'value', max: 1, axisLabel: { color: '#334155', formatter: v => v * 100 + '%' } }, { splitLine: ax.splitLine }), series: [{ type: 'bar', barWidth: '50%', data: a.deep.pareto.map(p => p.pct), itemStyle: { color: '#6366f1', borderRadius: [6, 6, 0, 0] }, label: { show: true, position: 'top', color: '#0f1f3d', formatter: p => pct(p.value) } }] }));
@@ -1015,11 +1015,6 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       const rd = a.recaudoDiario || []; let acc = 0;
       if (rd.length) s.addChart(pptx.ChartType.line, [{ name: 'Cobrado acumulado', labels: rd.map(x => x.d.slice(8, 10) + '/' + x.d.slice(5, 7)), values: rd.map(x => Math.round(acc += x.v)) }, { name: 'Meta', labels: rd.map(x => x.d.slice(8, 10)), values: rd.map(() => Math.round(D.mf.meta)) }], { x: 4.8, y: 1.2, w: 8, h: 5.7, chartColors: ['1D4ED8', 'F59E0B'], lineSize: 3, lineDataSymbol: 'none', valAxisLabelFormatCode: '$#,##0', showLegend: true, legendPos: 'b' });
       const md = model();
-      if (a.deep) {
-        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Concentración: mayores clientes', pct(a.deep.top25Pct) + ' de la cartera en 25 clientes');
-        s.addChart(pptx.ChartType.bar, [{ name: '% de la cartera', labels: a.deep.pareto.map(p => 'Top ' + p.n), values: a.deep.pareto.map(p => Math.round(p.pct * 1000) / 10) }], { x: 0.5, y: 1.2, w: 12.3, h: 5.2, barDir: 'col', chartColors: ['6366F1'], valAxisMaxVal: 100, valAxisLabelFormatCode: '0"%"', showValue: true, dataLabelFormatCode: '0.0"%"', dataLabelColor: '0F1F3D', showLegend: false, catAxisLabelFontSize: 12, valAxisLabelFontSize: 11, dataLabelFontSize: 12, showTitle: true, title: '% de la cartera en los mayores clientes', titleFontSize: 14, titleColor: '0F1F3D' });
-        s.addText(a.deep.pareto.map(p => `Top ${p.n}: ${pct(p.pct)}`).join('   ·   '), { x: 0.5, y: 6.45, w: 12.3, h: 0.4, fontSize: 13, color: BLUE, bold: true });
-      }
       if (md) {
         const H = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
         const colT = t => t.bucket >= 5 ? 'DC2626' : t.bucket > 1 ? 'EA580C' : t.bucket === 1 ? 'CA8A04' : '16A34A';
@@ -1031,15 +1026,15 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
           s.addText('Estado: Vencido = ya pasó la fecha de la última letra · Vigente = todavía tiene letras por vencer.' + (rankTotal ? '  # = posición entre todos los clientes.' : ''), { x: 0.4, y: 6.5, w: 12.5, h: 0.35, fontSize: 10, color: '64748B' });
         };
         const graf = (titulo, top) => {
-          s = pptx.addSlide({ masterName: 'M' }); title(s, titulo, 'saldo y tramo de mora');
-          s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: top.map(t => `${t.rankTotal}. ${t.nombre.length > 34 ? t.nombre.slice(0, 33) + '…' : t.nombre} · ${t.clas}`), values: top.map(t => Math.round(t.saldo)) }],
-            { x: 0.4, y: 1.15, w: 12.5, h: 5.4, barDir: 'bar', catAxisOrientation: 'maxMin', chartColors: top.map(t => colT(t)), varyColors: true, valAxisHidden: true, valGridLine: { style: 'none' }, showValue: true, dataLabelFormatCode: '$#,##0', dataLabelFontSize: 12, catAxisLabelFontSize: 12, showLegend: false, showTitle: true, title: titulo, titleFontSize: 14, titleColor: '0F1F3D', barGapWidthPct: 45 });
+          s = pptx.addSlide({ masterName: 'M' }); title(s, titulo, `suman ${pct(sumPct(top))} de la cartera`);
+          s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: top.map(t => `${t.rankTotal}. ${t.nombre.length > 34 ? t.nombre.slice(0, 33) + '…' : t.nombre} · ${pct(t.pct)} · ${t.clas}`), values: top.map(t => Math.round(t.saldo)) }],
+            { x: 0.4, y: 1.15, w: 12.5, h: 5.4, barDir: 'bar', catAxisOrientation: 'maxMin', chartColors: top.map(t => colT(t)), varyColors: true, valAxisHidden: true, valGridLine: { style: 'none' }, showValue: true, dataLabelFormatCode: '$#,##0', dataLabelFontSize: 12, catAxisLabelFontSize: 12, showLegend: false, showTitle: true, title: `${titulo}: suman ${pct(sumPct(top))} de la cartera`, titleFontSize: 14, titleColor: '0F1F3D', barGapWidthPct: 45 });
           s.addText('Color por tramo de mora: verde 0-30 · amarillo 31-60 · naranja 61-365 · rojo 365 Mas. El número es la posición entre todos los clientes.', { x: 0.4, y: 6.6, w: 12.5, h: 0.3, fontSize: 10, color: '64748B' });
         };
         const top10 = C.topClients(md, 10), top10f = C.topClients(md, 10, g => g.bucket < 5);
-        topTable('10 mayores clientes', 'tramo de mora y estado', top10);
+        topTable('10 mayores clientes', `suman ${pct(sumPct(top10))} de la cartera · tramo de mora y estado`, top10);
         graf('10 mayores clientes', top10);
-        topTable('10 mayores clientes fuera de 365 Mas', 'los más grandes que aún se pueden gestionar', top10f, true);
+        topTable('10 mayores clientes fuera de 365 Mas', `suman ${pct(sumPct(top10f))} de la cartera · los más grandes que aún se pueden gestionar`, top10f, true);
         graf('10 mayores clientes fuera de 365 Mas', top10f);
       }
       if (a.deep) {
