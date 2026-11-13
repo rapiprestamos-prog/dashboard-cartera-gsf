@@ -167,3 +167,18 @@ body.dragging .dropall{display:grid}
 /* permisos por rol */
 body.sin-carga #btnUpload,body.sin-carga #drop{display:none!important}
 body.sin-descarga #dlGsf,body.sin-descarga #dlAna,body.sin-descarga #metaXls,body.sin-descarga #letXls,body.sin-descarga #letPpt,body.sin-descarga #pptBtn,body.sin-descarga #histExp{display:none!important}
+
+/* legibilidad: barras de desplazamiento oscuras, tarjetas de reportes y cuadre sin desbordes */
+html{color-scheme:dark}
+.tbl-wrap,.tbl-wrap *{scrollbar-color:#334155 #0b1430;scrollbar-width:thin}
+.tbl-wrap::-webkit-scrollbar{width:10px;height:10px}.tbl-wrap::-webkit-scrollbar-track{background:#0b1430}.tbl-wrap::-webkit-scrollbar-thumb{background:#334155;border-radius:10px}
+.tbl-wrap{background:#0b1430}
+.rep .nm span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rep .nm span.fn{font-size:10.5px;opacity:.75}
+.rep .acts{display:flex;gap:6px;flex:none}
+.replist.wide{grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px}
+.replist.wide .rep{padding:12px 14px}
+.replist.wide .rep .nm b{font-size:13.5px}
+#cuTbl table.t td{white-space:normal;vertical-align:top;line-height:1.35}
+#cuTbl table.t td.n{white-space:nowrap}
+#cuTbl table.t th{white-space:normal}

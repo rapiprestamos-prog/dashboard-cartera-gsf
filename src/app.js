@@ -1142,7 +1142,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     const fileName = r => r.filename.replace(/^[0-9a-f]{8}-/, '');
     const conRaw = reps.filter(r => r.raw);
     v.innerHTML = `<div class="vhead"><div><h2>Ver reportes</h2><p>Los Excel tal como vienen del SIF. Puedes verlos aquí o descargar el archivo original otra vez.</p></div>${conRaw.length && puede('descargar') ? `<div class="tools" style="margin:0"><button class="btn pri" id="repAll"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>Descargar todos (${conRaw.length})</button></div>` : ''}</div>
-      ${reps.length ? `<div class="replist" id="repList">${reps.map((r, i) => `<div class="rep ${r.key ? 'ok' : ''}"><span class="dot"></span><div class="nm"><b title="${esc(fileName(r))}">${esc(r.name)}</b><span>${int(r.rows.length)} filas de detalle · ${esc(fileName(r))}</span></div><div style="display:flex;gap:6px">${r.raw && puede('descargar') ? `<button class="btn sm ghost" data-dl="${i}" title="Descargar el archivo original">Descargar</button>` : ''}<button class="btn sm" data-i="${i}">Ver</button></div></div>`).join('')}</div><div class="card mt" id="repView" style="display:none"></div>`
+      ${reps.length ? `<div class="replist wide" id="repList">${reps.map((r, i) => `<div class="rep ${r.key ? 'ok' : ''}"><span class="dot"></span><div class="nm"><b title="${esc(r.name)}">${esc(r.name)}</b><span>${int(r.rows.length)} filas de detalle</span><span class="fn" title="${esc(fileName(r))}">${esc(fileName(r))}</span></div><div class="acts">${r.raw && puede('descargar') ? `<button class="btn sm ghost" data-dl="${i}" title="Descargar el archivo original">Descargar</button>` : ''}<button class="btn sm" data-i="${i}">Ver</button></div></div>`).join('')}</div><div class="card mt" id="repView" style="display:none"></div>`
         : canFetch ? `<div class="card"><div class="muted">Trayendo los reportes originales de ${esc(C.monthLabel(ym))} desde Google Sheets…</div></div>`
         : yaTraidos ? '<div class="card"><div class="muted">Este mes se guardó antes de que el dashboard conservara los reportes originales. Vuelve a cargar sus reportes una vez y quedarán guardados para descargarlos cuando quieras.</div></div>'
         : `<div class="card">${S.gsDetalle[ym] && gsOn() && !puede('getFiles') ? '<div class="muted">Tu rol no permite ver ni descargar los reportes originales.</div>' : needDetail('Aquí puedes abrir y descargar cada Excel original. Los meses guardados en Google Sheets con detalle conservan los originales desde que se cargan.')}</div>`}`;
@@ -1155,11 +1155,23 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       if (box.dataset.i === b.dataset.i && box.style.display !== 'none') { box.style.display = 'none'; b.textContent = 'Ver'; return; }
       $$('#repList button[data-i]').forEach(x => x.textContent = 'Ver'); b.textContent = 'Ocultar';
       box.dataset.i = b.dataset.i; box.style.display = 'block';
-      const aoa = r.aoa.filter(row => row && row.some(x => x != null && x !== ''));
-      const width = Math.max(...aoa.slice(0, 200).map(x => x.length));
-      const cols = Array.from({ length: width }, (_, j) => ({ h: XLSX.utils.encode_col(j), v: row => row[j] == null ? '' : row[j], n: false, f: (x) => typeof x === 'number' ? (x > 20000 && x < 60000 && Number.isInteger(x) ? dd(C.validDate(new Date(Math.round((x - 25569) * 864e5)).toISOString().slice(0, 10))) + '' : nf2.format(x)) : esc(x) }));
-      box.innerHTML = `<h3>${esc(r.name)} <button class="btn sm ghost" id="repClose">Cerrar</button></h3><div id="repTbl"></div>`;
-      table($('#repTbl'), cols, aoa, { pageSize: 100, sort: -1 });
+      const all = r.aoa.filter(row => row && row.some(x => x != null && x !== ''));
+      const filled = row => row.filter(x => x != null && String(x).trim() !== '').length;
+      // fila de encabezados: la primera (entre las 20 primeras) con 4+ textos y palabras típicas
+      // primera fila de datos (2+ números) y, justo antes, las filas de encabezado (hasta 3, solo texto)
+      const nums = row => row.filter(x => typeof x === 'number').length;
+      let d = all.slice(0, 40).findIndex(row => nums(row) >= 2 && filled(row) >= 3); if (d < 0) d = 0;
+      let h0 = d; while (h0 > 0 && d - h0 < 4 && filled(all[h0 - 1]) >= 1 && nums(all[h0 - 1]) === 0 && !/^(per[ií]odo|aseguradora|informe|grupo|reporte|fecha\/hora|impreso)/i.test(String(all[h0 - 1].find(x => x != null && String(x).trim() !== '') || '').trim())) h0--;
+      const hdrRows = all.slice(h0, d);
+      const titulo = all.slice(0, h0).map(row => row.filter(x => x != null && String(x).trim() !== '').join('  ')).filter(Boolean);
+      const head = []; hdrRows.forEach(row => row.forEach((x, j) => { if (x != null && String(x).trim() !== '') head[j] = (head[j] ? head[j] + ' ' : '') + String(x).trim(); }));
+      const body = all.slice(d);
+      const width = Math.max(head.length, ...body.slice(0, 300).map(x => x.length));
+      const usadas = Array.from({ length: width }, (_, j) => j).filter(j => (head[j] != null && String(head[j]).trim() !== '') || body.some(row => row[j] != null && String(row[j]).trim() !== ''));
+      const fmt = x => typeof x === 'number' ? (x > 20000 && x < 60000 && Number.isInteger(x) ? dd(C.validDate(new Date(Math.round((x - 25569) * 864e5)).toISOString().slice(0, 10))) + '' : nf2.format(x)) : esc(x);
+      const cols = usadas.map(j => ({ h: head[j] != null && String(head[j]).trim() !== '' ? String(head[j]).trim() : XLSX.utils.encode_col(j), v: row => row[j] == null ? '' : row[j], n: body.slice(0, 50).filter(row => typeof row[j] === 'number').length > 25, f: fmt }));
+      box.innerHTML = `<h3>${esc(r.name)} <button class="btn sm ghost" id="repClose">Cerrar</button></h3>${titulo.length ? `<div class="note" style="margin:-4px 0 10px;line-height:1.6">${titulo.map(esc).join('<br>')}</div>` : ''}<div id="repTbl"></div>`;
+      table($('#repTbl'), cols, body, { pageSize: 100, sort: -1 });
       $('#repClose').onclick = () => { box.style.display = 'none'; b.textContent = 'Ver'; };
       box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
