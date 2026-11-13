@@ -889,7 +889,9 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       `<div class="slide"><div class="band">Calidad de la cartera<small>saldo por tramo de mora</small></div><div class="body"><div id="sP2" class="schart"></div></div>${foot(4)}</div>`,
       `<div class="slide"><div class="band">Dónde se concentra el riesgo<small>top patronos por PAR30</small></div><div class="body"><div id="sP3" class="schart"></div></div>${foot(5)}</div>`,
       `<div class="slide"><div class="band">Cobros vs meta<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1.6fr;gap:3%"><div id="sP4a" class="schart"></div><div id="sP4b" class="schart"></div></div>${foot(6)}</div>`,
-      `<div class="slide"><div class="band">Concentración: mayores clientes<small>${a.deep ? pct(a.deep.top25Pct) + ' de la cartera en 25 clientes' : ''}</small></div><div class="body">${model() ? topSlideHtml(C.topClients(model(), 10)) : '<div id="sP7" class="schart"></div>'}</div>${foot('')}</div>`,
+      ...(a.deep ? [`<div class="slide"><div class="band">Concentración: mayores clientes<small>${pct(a.deep.top25Pct)} de la cartera en 25 clientes</small></div><div class="body"><div id="sP7" class="schart"></div></div>${foot('')}</div>`] : []),
+      ...(model() ? [`<div class="slide"><div class="band">10 mayores clientes<small>tramo de mora y estado</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10))}</div>${foot('')}</div>`,
+        `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>los más grandes que aún se pueden gestionar</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10, g => g.bucket < 5), true)}</div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Cosechas y antigüedad de pago<small>saldo y PAR30 por año de desembolso</small></div><div class="body" style="display:grid;grid-template-columns:1.3fr 1fr;gap:3%"><div id="sP8" class="schart"></div><div id="sP9" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Vencimientos y tasas<small>tasa promedio ${a.deep.tasaProm.toFixed(2)}% · plazo ${Math.round(a.deep.plazoProm)} meses</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP11a" class="schart"></div><div id="sP11b" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">Letras del mes<small>vencieron vs cobrado · ${esc(a.label)}</small></div><div class="body">${letrasSlideHtml()}</div>${foot('')}</div>`] : []),
@@ -943,8 +945,13 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   function gestionSlideHtml() {
     return slideTable(['Cliente', 'Patrono', 'Oficial', 'Tramo', 'Meta', 'Cobrado', 'Falta'], gestionRows(10).map(x => [esc(x.l.nombre), esc(String(x.l.patrono).slice(0, 26)), esc(x.l.oficial), `<span style="color:${x.l.bucket > 1 ? '#dc2626' : x.l.bucket ? '#d97706' : '#16a34a'};font-weight:600">${x.l.clas}</span>`, money0(x.meta), money0(x.l.pagadoMes), `<b>${money0(x.falta)}</b>`]), [4, 5, 6]);
   }
-  function topSlideHtml(top) {
-    return `<table style="width:100%;border-collapse:collapse;font-size:clamp(7px,1.15vw,14px)"><thead><tr style="background:#0f2a52;color:#fff">${['#', 'Cliente', 'Patrono', 'Saldo', '% cartera', 'Tramo'].map(h => `<th style="padding:.5em .7em;text-align:${/Saldo|%/.test(h) ? 'right' : 'left'}">${h}</th>`).join('')}</tr></thead><tbody>${top.map((t, i) => `<tr style="background:${i % 2 ? '#f1f5fb' : '#fff'}"><td style="padding:.4em .7em">${t.rank}</td><td style="padding:.4em .7em">${esc(t.nombre)}</td><td style="padding:.4em .7em">${esc(String(t.patrono).slice(0, 30))}</td><td style="padding:.4em .7em;text-align:right">${money0(t.saldo)}</td><td style="padding:.4em .7em;text-align:right">${pct(t.pct)}</td><td style="padding:.4em .7em;color:${t.bucket > 1 ? '#dc2626' : '#16a34a'};font-weight:600">${t.clas}</td></tr>`).join('')}</tbody></table>`;
+  const dmyS = d => d ? d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4) : '—';
+  const colTramo = t => t.bucket >= 5 ? '#dc2626' : t.bucket > 1 ? '#ea580c' : t.bucket === 1 ? '#ca8a04' : '#16a34a';
+  function topSlideHtml(top, conRankTotal) {
+    const H = ['#', 'Cliente', 'Patrono', 'Saldo', '% cartera', 'Tramo', 'Días mora', 'Estado', 'Último pago'];
+    const td = (x, st) => `<td style="padding:.38em .6em;${st || ''}">${x}</td>`;
+    return `<table style="width:100%;border-collapse:collapse;font-size:clamp(7px,1.02vw,13px)"><thead><tr style="background:#0f2a52;color:#fff">${H.map(h => `<th style="padding:.5em .6em;text-align:${/Saldo|%|Días/.test(h) ? 'right' : 'left'}">${h}</th>`).join('')}</tr></thead><tbody>${top.map((t, i) => `<tr style="background:${i % 2 ? '#f1f5fb' : '#fff'}">${td(conRankTotal ? t.rankTotal : t.rank)}${td(esc(t.nombre))}${td(esc(String(t.patrono).replace(/\s+/g, ' ').slice(0, 32)))}${td(money0(t.saldo), 'text-align:right')}${td(pct(t.pct), 'text-align:right')}${td(t.clas, `color:${colTramo(t)};font-weight:700`)}${td(int(t.dias), 'text-align:right')}${td(t.estado, `font-weight:600;color:${t.estado === 'Vigente' ? '#334155' : '#b91c1c'}`)}${td(dmyS(t.fult))}</tr>`).join('')}</tbody></table>
+      <div style="margin-top:.8em;font-size:clamp(7px,.9vw,12px);color:#64748b">Estado: <b>Vencido</b> = ya pasó la fecha de la última letra · <b>Vigente</b> = todavía tiene letras por vencer.${conRankTotal ? ' # = posición entre todos los clientes de la cartera.' : ''}</div>`;
   }
   function drawSlideCharts(D) {
     const a = D.a; const light = { textStyle: { fontFamily: 'Inter', color: '#334155' } };
@@ -1000,13 +1007,23 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       const rd = a.recaudoDiario || []; let acc = 0;
       if (rd.length) s.addChart(pptx.ChartType.line, [{ name: 'Cobrado acumulado', labels: rd.map(x => x.d.slice(8, 10) + '/' + x.d.slice(5, 7)), values: rd.map(x => Math.round(acc += x.v)) }, { name: 'Meta', labels: rd.map(x => x.d.slice(8, 10)), values: rd.map(() => Math.round(D.mf.meta)) }], { x: 4.8, y: 1.2, w: 8, h: 5.7, chartColors: ['1D4ED8', 'F59E0B'], lineSize: 3, lineDataSymbol: 'none', valAxisLabelFormatCode: '$#,##0', showLegend: true, legendPos: 'b' });
       const md = model();
-      if (md || a.deep) {
-        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Concentración: mayores clientes', a.deep ? pct(a.deep.top25Pct) + ' de la cartera en 25 clientes' : '');
-        if (md) {
-          const top = C.topClients(md, 10); const H = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
-          s.addTable([[H('#'), H('Cliente'), H('Patrono'), H('Saldo'), H('% cartera'), H('Tramo')], ...top.map(t => [String(t.rank), t.nombre, String(t.patrono).slice(0, 34), money0(t.saldo), pct(t.pct), { text: t.clas, options: { color: t.bucket > 1 ? 'DC2626' : '16A34A', bold: true } }])], { x: 0.5, y: 1.2, w: 12.3, fontSize: 14, rowH: 0.44, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: [0.5, 4.2, 3.9, 1.5, 1.1, 1.1], autoPage: false });
-        }
-        if (a.deep) s.addText(a.deep.pareto.map(p => `Top ${p.n}: ${pct(p.pct)}`).join('   ·   '), { x: 0.5, y: 6.45, w: 12.3, h: 0.4, fontSize: 13, color: BLUE, bold: true });
+      if (a.deep) {
+        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Concentración: mayores clientes', pct(a.deep.top25Pct) + ' de la cartera en 25 clientes');
+        s.addChart(pptx.ChartType.bar, [{ name: '% de la cartera', labels: a.deep.pareto.map(p => 'Top ' + p.n), values: a.deep.pareto.map(p => Math.round(p.pct * 1000) / 10) }], { x: 0.5, y: 1.2, w: 12.3, h: 5.2, barDir: 'col', chartColors: ['6366F1'], valAxisMaxVal: 100, valAxisLabelFormatCode: '0"%"', showValue: true, dataLabelFormatCode: '0.0"%"', dataLabelColor: '0F1F3D', showLegend: false, catAxisLabelFontSize: 12, valAxisLabelFontSize: 11, dataLabelFontSize: 12 });
+        s.addText(a.deep.pareto.map(p => `Top ${p.n}: ${pct(p.pct)}`).join('   ·   '), { x: 0.5, y: 6.45, w: 12.3, h: 0.4, fontSize: 13, color: BLUE, bold: true });
+      }
+      if (md) {
+        const H = o => ({ text: o, options: { bold: true, color: 'FFFFFF', fill: { color: NAVY } } });
+        const colT = t => t.bucket >= 5 ? 'DC2626' : t.bucket > 1 ? 'EA580C' : t.bucket === 1 ? 'CA8A04' : '16A34A';
+        const topTable = (titulo, sub, top, rankTotal) => {
+          s = pptx.addSlide({ masterName: 'M' }); title(s, titulo, sub);
+          s.addTable([[H('#'), H('Cliente'), H('Patrono'), H('Saldo'), H('% cartera'), H('Tramo'), H('Días mora'), H('Estado'), H('Último pago')],
+            ...top.map(t => [String(rankTotal ? t.rankTotal : t.rank), t.nombre, String(t.patrono).replace(/\s+/g, ' ').slice(0, 32), money0(t.saldo), pct(t.pct), { text: t.clas, options: { color: colT(t), bold: true } }, int(t.dias), { text: t.estado, options: { color: t.estado === 'Vigente' ? '334155' : 'B91C1C', bold: true } }, dmyS(t.fult)])],
+            { x: 0.4, y: 1.15, w: 12.5, fontSize: 11, rowH: 0.42, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: [0.45, 3.2, 2.75, 1.15, 0.95, 1.0, 0.85, 1.15, 1.0], fill: { color: 'FFFFFF' }, color: '0F1F3D' });
+          s.addText('Estado: Vencido = ya pasó la fecha de la última letra · Vigente = todavía tiene letras por vencer.' + (rankTotal ? '  # = posición entre todos los clientes.' : ''), { x: 0.4, y: 6.5, w: 12.5, h: 0.35, fontSize: 10, color: '64748B' });
+        };
+        topTable('10 mayores clientes', 'tramo de mora y estado', C.topClients(md, 10));
+        topTable('10 mayores clientes fuera de 365 Mas', 'los más grandes que aún se pueden gestionar', C.topClients(md, 10, g => g.bucket < 5), true);
       }
       if (a.deep) {
         const vin = a.deep.byVintage, lp = a.deep.byLastPay;

@@ -534,17 +534,17 @@
     };
   }
   // Mayores clientes (requiere el detalle del mes; no se guarda en el historial)
-  function topClients(model, n) {
+  function topClients(model, n, filtro) {
     const tot = model.loans.reduce((s, l) => s + l.saldo, 0) || 1;
     const m = new Map();
     model.loans.forEach(l => {
       const k = l.cedula || l.nombre; let g = m.get(k);
-      if (!g) { g = { cedula: l.cedula, nombre: l.nombre, prestamos: 0, contratos: [], monto: 0, saldo: 0, moroso: 0, cuotaMes: 0, pagadoMes: 0, bucket: 0, dias: 0, patrono: l.patrono, oficial: l.oficial, producto: l.producto, fult: l.fult }; m.set(k, g); }
+      if (!g) { g = { cedula: l.cedula, nombre: l.nombre, prestamos: 0, contratos: [], monto: 0, saldo: 0, moroso: 0, cuotaMes: 0, pagadoMes: 0, bucket: 0, dias: 0, patrono: l.patrono, oficial: l.oficial, producto: l.producto, fult: l.fult, vencidos: 0, fvenc: l.fvenc }; m.set(k, g); }
       g.prestamos++; g.contratos.push(l.id); g.monto += l.monto; g.saldo += l.saldo; g.moroso += l.totalMoroso; g.cuotaMes += l.cuotaMes; g.pagadoMes += l.pagadoMes;
-      if (l.bucket > g.bucket) { g.bucket = l.bucket; } if (l.dias > g.dias) g.dias = l.dias; if ((l.fult || '') > (g.fult || '')) g.fult = l.fult;
+      if (l.bucket > g.bucket) { g.bucket = l.bucket; } if (l.dias > g.dias) g.dias = l.dias; if ((l.fult || '') > (g.fult || '')) g.fult = l.fult; if (l.estado === 'Vencido') g.vencidos++; if ((l.fvenc || '') > (g.fvenc || '')) g.fvenc = l.fvenc;
     });
     let acc = 0;
-    return [...m.values()].sort((a, b) => b.saldo - a.saldo).slice(0, n || 25).map((g, i) => { acc += g.saldo; return Object.assign(g, { rank: i + 1, pct: g.saldo / tot, cumPct: acc / tot, clas: BUCKETS[g.bucket] }); });
+    return [...m.values()].sort((a, b) => b.saldo - a.saldo).map((g, i) => Object.assign(g, { rankTotal: i + 1, estado: g.vencidos ? (g.vencidos === g.prestamos ? 'Vencido' : 'Vencido parcial') : 'Vigente' })).filter(g => !filtro || filtro(g)).slice(0, n || 25).map((g, i) => { acc += g.saldo; return Object.assign(g, { rank: i + 1, pct: g.saldo / tot, cumPct: acc / tot, clas: BUCKETS[g.bucket] }); });
   }
 
   function groupBy(arr, kf, vf) {
