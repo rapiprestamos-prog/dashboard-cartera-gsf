@@ -891,8 +891,9 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
       `<div class="slide"><div class="band">Cobros vs meta<small>${esc(a.label)}</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1.6fr;gap:3%"><div id="sP4a" class="schart"></div><div id="sP4b" class="schart"></div></div>${foot(6)}</div>`,
       ...(a.deep ? [`<div class="slide"><div class="band">Concentración: mayores clientes<small>${pct(a.deep.top25Pct)} de la cartera en 25 clientes</small></div><div class="body"><div id="sP7" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">10 mayores clientes<small>tramo de mora y estado</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10))}</div>${foot('')}</div>`,
+        `<div class="slide"><div class="band">10 mayores clientes<small>saldo y tramo de mora</small></div><div class="body"><div id="sP7b" class="schart"></div></div>${foot('')}</div>`,
         `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>los más grandes que aún se pueden gestionar</small></div><div class="body">${topSlideHtml(C.topClients(model(), 10, g => g.bucket < 5), true)}</div>${foot('')}</div>`,
-        `<div class="slide"><div class="band">Mayores clientes<small>saldo de los 10 mayores y de los 10 mayores fuera de 365 Mas</small></div><div class="body" style="display:grid;grid-template-rows:1fr 1fr;gap:2%"><div id="sP7b" class="schart"></div><div id="sP7c" class="schart"></div></div>${foot('')}</div>`] : []),
+        `<div class="slide"><div class="band">10 mayores clientes fuera de 365 Mas<small>saldo y tramo de mora</small></div><div class="body"><div id="sP7c" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Cosechas y antigüedad de pago<small>saldo y PAR30 por año de desembolso</small></div><div class="body" style="display:grid;grid-template-columns:1.3fr 1fr;gap:3%"><div id="sP8" class="schart"></div><div id="sP9" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(a.deep ? [`<div class="slide"><div class="band">Vencimientos y tasas<small>tasa promedio ${a.deep.tasaProm.toFixed(2)}% · plazo ${Math.round(a.deep.plazoProm)} meses</small></div><div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:3%"><div id="sP11a" class="schart"></div><div id="sP11b" class="schart"></div></div>${foot('')}</div>`] : []),
       ...(model() ? [`<div class="slide"><div class="band">Letras del mes<small>vencieron vs cobrado · ${esc(a.label)}</small></div><div class="body">${letrasSlideHtml()}</div>${foot('')}</div>`] : []),
@@ -968,8 +969,8 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
     }
     const colTr = b => b >= 5 ? '#dc2626' : b > 1 ? '#ea580c' : b === 1 ? '#ca8a04' : '#16a34a';
     const topBars = (id, titulo, top) => chart(id, Object.assign({}, light, { title: { text: titulo, left: 0, top: 0, textStyle: { color: '#0f1f3d', fontSize: 14, fontWeight: 700 } }, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => { const t = top[p[0].dataIndex]; return `<b>${esc(t.nombre)}</b><br>${money0(t.saldo)} · ${t.clas} · ${t.estado}`; } },
-      grid: { left: 210, right: 90, top: 30, bottom: 6 }, xAxis: { type: 'value', show: false }, yAxis: Object.assign({ type: 'category', inverse: true, data: top.map(t => `${t.rankTotal}. ${t.nombre.length > 28 ? t.nombre.slice(0, 27) + '…' : t.nombre}`) }, ax, { axisLabel: { color: '#334155', fontSize: 10 } }),
-      series: [{ type: 'bar', barWidth: '62%', data: top.map(t => ({ value: Math.round(t.saldo), itemStyle: { color: colTr(t.bucket), borderRadius: [0, 4, 4, 0] } })), label: { show: true, position: 'right', color: '#0f1f3d', fontSize: 10, formatter: p => money0(p.value) + '  ' + top[p.dataIndex].clas } }] }));
+      grid: { left: 270, right: 120, top: 40, bottom: 10 }, xAxis: { type: 'value', show: false }, yAxis: Object.assign({ type: 'category', inverse: true, data: top.map(t => `${t.rankTotal}. ${t.nombre.length > 28 ? t.nombre.slice(0, 27) + '…' : t.nombre}`) }, ax, { axisLabel: { color: '#334155', fontSize: 12 } }),
+      series: [{ type: 'bar', barWidth: '60%', data: top.map(t => ({ value: Math.round(t.saldo), itemStyle: { color: colTr(t.bucket), borderRadius: [0, 4, 4, 0] } })), label: { show: true, position: 'right', color: '#0f1f3d', fontSize: 12, formatter: p => money0(p.value) + '  ' + top[p.dataIndex].clas } }] }));
     if (on('sP7b') && model()) topBars('sP7b', '10 mayores clientes', C.topClients(model(), 10));
     if (on('sP7c') && model()) topBars('sP7c', '10 mayores clientes fuera de 365 Mas', C.topClients(model(), 10, g => g.bucket < 5));
     if (on('sP7') && a.deep) chart('sP7', Object.assign({}, light, { title: { text: '% de la cartera en los mayores clientes', left: 0, top: 0, textStyle: { color: '#0f1f3d', fontSize: 14, fontWeight: 700 } }, grid: { left: 60, right: 20, top: 44, bottom: 30 }, xAxis: Object.assign({ type: 'category', data: a.deep.pareto.map(p => 'Top ' + p.n) }, ax), yAxis: Object.assign({ type: 'value', max: 1, axisLabel: { color: '#334155', formatter: v => v * 100 + '%' } }, { splitLine: ax.splitLine }), series: [{ type: 'bar', barWidth: '50%', data: a.deep.pareto.map(p => p.pct), itemStyle: { color: '#6366f1', borderRadius: [6, 6, 0, 0] }, label: { show: true, position: 'top', color: '#0f1f3d', formatter: p => pct(p.value) } }] }));
@@ -1029,14 +1030,17 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
             { x: 0.4, y: 1.15, w: 12.5, fontSize: 11, rowH: 0.42, border: { type: 'solid', color: 'E2E8F0', pt: 1 }, colW: [0.45, 3.2, 2.75, 1.15, 0.95, 1.0, 0.85, 1.15, 1.0], fill: { color: 'FFFFFF' }, color: '0F1F3D' });
           s.addText('Estado: Vencido = ya pasó la fecha de la última letra · Vigente = todavía tiene letras por vencer.' + (rankTotal ? '  # = posición entre todos los clientes.' : ''), { x: 0.4, y: 6.5, w: 12.5, h: 0.35, fontSize: 10, color: '64748B' });
         };
-        topTable('10 mayores clientes', 'tramo de mora y estado', C.topClients(md, 10));
-        topTable('10 mayores clientes fuera de 365 Mas', 'los más grandes que aún se pueden gestionar', C.topClients(md, 10, g => g.bucket < 5), true);
-        const barras = (titulo, top, y) => s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: top.map(t => `${t.rankTotal}. ${t.nombre.length > 30 ? t.nombre.slice(0, 29) + '…' : t.nombre} · ${t.clas}`), values: top.map(t => Math.round(t.saldo)) }],
-          { x: 0.4, y, w: 12.5, h: 2.75, barDir: 'bar', catAxisOrientation: 'maxMin', chartColors: top.map(t => colT(t)), varyColors: true, valAxisHidden: true, valGridLine: { style: 'none' }, showValue: true, dataLabelFormatCode: '$#,##0', dataLabelFontSize: 9, catAxisLabelFontSize: 9, showLegend: false, showTitle: true, title: titulo, titleFontSize: 13, titleColor: '0F1F3D', barGapWidthPct: 40 });
-        s = pptx.addSlide({ masterName: 'M' }); title(s, 'Mayores clientes', 'saldo de los 10 mayores y de los 10 mayores fuera de 365 Mas');
-        barras('10 mayores clientes', C.topClients(md, 10), 1.1);
-        barras('10 mayores clientes fuera de 365 Mas', C.topClients(md, 10, g => g.bucket < 5), 3.95);
-        s.addText('Color por tramo de mora: verde 0-30 · amarillo 31-60 · naranja 61-365 · rojo 365 Mas. El número es la posición entre todos los clientes.', { x: 0.4, y: 6.75, w: 12.5, h: 0.3, fontSize: 9, color: '64748B' });
+        const graf = (titulo, top) => {
+          s = pptx.addSlide({ masterName: 'M' }); title(s, titulo, 'saldo y tramo de mora');
+          s.addChart(pptx.ChartType.bar, [{ name: 'Saldo', labels: top.map(t => `${t.rankTotal}. ${t.nombre.length > 34 ? t.nombre.slice(0, 33) + '…' : t.nombre} · ${t.clas}`), values: top.map(t => Math.round(t.saldo)) }],
+            { x: 0.4, y: 1.15, w: 12.5, h: 5.4, barDir: 'bar', catAxisOrientation: 'maxMin', chartColors: top.map(t => colT(t)), varyColors: true, valAxisHidden: true, valGridLine: { style: 'none' }, showValue: true, dataLabelFormatCode: '$#,##0', dataLabelFontSize: 12, catAxisLabelFontSize: 12, showLegend: false, showTitle: true, title: titulo, titleFontSize: 14, titleColor: '0F1F3D', barGapWidthPct: 45 });
+          s.addText('Color por tramo de mora: verde 0-30 · amarillo 31-60 · naranja 61-365 · rojo 365 Mas. El número es la posición entre todos los clientes.', { x: 0.4, y: 6.6, w: 12.5, h: 0.3, fontSize: 10, color: '64748B' });
+        };
+        const top10 = C.topClients(md, 10), top10f = C.topClients(md, 10, g => g.bucket < 5);
+        topTable('10 mayores clientes', 'tramo de mora y estado', top10);
+        graf('10 mayores clientes', top10);
+        topTable('10 mayores clientes fuera de 365 Mas', 'los más grandes que aún se pueden gestionar', top10f, true);
+        graf('10 mayores clientes fuera de 365 Mas', top10f);
       }
       if (a.deep) {
         const vin = a.deep.byVintage, lp = a.deep.byLastPay;
