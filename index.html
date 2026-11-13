@@ -1123,7 +1123,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
   const gsCfg = () => {
     if (S.gs) return S.gs;
     const saved = LS.get('sheets') || {};
-    S.gs = { url: GS_FIXED || saved.url || '', token: LS.get('tok') || '', me: LS.get('me') || null, detalle: saved.detalle2 !== false };
+    S.gs = { url: GS_FIXED || saved.url || '', token: LS.get('tok') || '', me: LS.get('me') || null, detalle: true };
     return S.gs;
   };
   function gsRemember() { const g = gsCfg(); LS.set('sheets', { url: GS_FIXED ? undefined : g.url, detalle2: g.detalle }); if (g.token) { LS.set('tok', g.token); LS.set('me', g.me); } else { LS.del('tok'); LS.del('me'); } }
@@ -1218,9 +1218,20 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
   }
   async function saveMonth(agg, md, reps) {
     const all = Object.assign({}, LS.get('history') || {}); all[agg.month] = agg; LS.set('history', all);
-    if (gsOn()) { try { loader(true, 'Guardando en Google Sheets…', 95); await gsSaveMonth(agg, md, reps); return 'sheets'; } catch (e) { toast('No se pudo guardar en Google Sheets: ' + e.message + '. Quedó en este navegador.', 7000); return false; } }
+    if (gsOn()) { try { loader(true, 'Guardando en Google Sheets…', 95); await gsSaveMonth(agg, md, reps); return 'sheets'; } catch (e) { S.saveErr = { month: agg.month, msg: e.message }; showSaveErr(); return false; } }
     if (S.store) { try { await S.store.collection('data/users/' + S.uid).doc('m' + agg.month.replace('-', '')).set(agg); return true; } catch (e) { toast('Guardado solo en este navegador (' + (e.code || 'error') + ').'); } }
     return false;
+  }
+  function showSaveErr() {
+    let el = document.getElementById('saveWarn'); if (!S.saveErr) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'saveWarn'; el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:680px;width:calc(100% - 32px);background:#3b1d0a;border:1px solid #f59e0b;color:#fde68a;border-radius:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.5);font-size:13px'; document.body.appendChild(el); }
+    el.innerHTML = `<div style="flex:1"><b>No se guardó ${esc(C.monthLabel(S.saveErr.month))} en Google Sheets.</b> ${esc(S.saveErr.msg || '')}. Lo ves aquí, pero otros usuarios y otros equipos no lo verán hasta que se guarde.</div><button class="btn pri sm" id="swRetry">Reintentar</button><button class="btn sm ghost" id="swX">✕</button>`;
+    el.querySelector('#swX').onclick = () => { el.remove(); };
+    el.querySelector('#swRetry').onclick = async () => {
+      const ym = S.saveErr.month, m = S.models[ym]; el.querySelector('#swRetry').disabled = true; el.querySelector('#swRetry').textContent = 'Guardando…';
+      try { await gsSaveMonth(S.history[ym], m && !m.fromSheets ? m.model : null, m && m.reports); S.saveErr = null; showSaveErr(); toast(`${C.monthLabel(ym)} guardado en Google Sheets con el detalle y los reportes originales.`, 6000); renderAll(); }
+      catch (e) { S.saveErr.msg = e.message; showSaveErr(); }
+    };
   }
   async function deleteMonth(ym) {
     if (!puede('deleteMonth')) { toast('Tu rol no permite borrar meses.'); return; }
@@ -1237,8 +1248,21 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
   const agg = () => S.history[S.current];
   const prevAgg = () => { const m = months(); const i = m.indexOf(S.current); return i > 0 ? S.history[m[i - 1]] : null; };
   const model = () => S.models[S.current] && S.models[S.current].model;
-  const reports = () => (S.models[S.current] && S.models[S.current].reports) || [];
-  const needDetail = (what) => `<div class="empty"><b>Falta el detalle de ${esc(C.monthLabel(S.current))}</b>${esc(what || 'Esta sección usa el detalle por cliente.')} Carga los reportes del mes con <b style="display:inline">Cargar mes</b>; se leen solo en tu navegador.</div>`;
+  const origLoading = {};
+  const reports = () => { const m = S.models[S.current]; return (m && m.reports && m.reports.length) ? m.reports : ((S.orig && S.orig[S.current]) || []); };
+  // Trae los reportes originales guardados en Sheets (para Ver reportes y Cuadre en otros equipos)
+  const puedeTraerOriginales = ym => ym && gsOn() && S.gsDetalle[ym] && puede('getFiles') && !(S.orig && S.orig[ym]);
+  function ensureOriginals(ym, done) {
+    if (origLoading[ym]) return; origLoading[ym] = true;
+    loadOriginals(ym).then(list => { S.orig = S.orig || {}; S.orig[ym] = list; if (S.current === ym) done(); })
+      .catch(e => toast('No se pudieron traer los reportes: ' + e.message, 6000)).finally(() => { origLoading[ym] = false; });
+  }
+  const needDetail = (what) => {
+    const ym = S.current, lab = esc(C.monthLabel(ym));
+    if (gsOn() && S.history[ym] && S.gsDetalle[ym] && !S.models[ym]) return `<div class="empty"><b>Trayendo el detalle de ${lab} desde Google Sheets…</b>Tarda unos segundos.</div>`;
+    if (gsOn() && S.history[ym] && !S.gsDetalle[ym]) return `<div class="empty"><b>${lab} está guardado solo con totales</b>En Google Sheets este mes no tiene el detalle por cliente ni los reportes originales${S.saveErr && S.saveErr.month === ym ? ' porque la última carga no se pudo guardar' : ''}. Vuelve a cargar sus reportes una vez con <b style="display:inline">Cargar mes</b> y quedará completo para todos los usuarios.</div>`;
+    return `<div class="empty"><b>Falta el detalle de ${lab}</b>${esc(what || 'Esta sección usa el detalle por cliente.')} Carga los reportes del mes con <b style="display:inline">Cargar mes</b>.</div>`;
+  };
   function delta(cur, prev, opts) {
     opts = opts || {};
     if (prev == null || !isFinite(prev) || prev === 0 && !opts.pp) return '';
@@ -1353,7 +1377,7 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
     const sel = $('#monthSel'); const m = months();
     sel.innerHTML = m.length ? m.slice().reverse().map(x => `<option value="${x}" ${x === S.current ? 'selected' : ''}>${C.monthLabel(x)}${S.models[x] ? '' : ''}</option>`).join('') : '<option>Sin datos</option>';
     const a = agg();
-    $('#subtitle').textContent = a ? `Cierre ${a.label} · ${int(a.kpi.prestamos)} préstamos${S.models[S.current] ? (S.models[S.current].fromSheets ? ' · detalle desde Google Sheets' : ' · detalle cargado') : ''}${gsOn() && S.gsStatus === 'ok' ? ' · historial en Google Sheets' : ''}` : 'Carga los reportes del mes';
+    $('#subtitle').textContent = a ? `Cierre ${a.label} · ${int(a.kpi.prestamos)} préstamos${S.models[S.current] ? (S.models[S.current].fromSheets ? ' · detalle desde Google Sheets' : ' · detalle cargado') : ''}${gsOn() && S.gsStatus === 'ok' ? (S.gsDetalle[S.current] ? ' · guardado completo en Google Sheets' : ' · en Google Sheets solo con totales') : ''}` : 'Carga los reportes del mes';
   }
 
   // ---------- RESUMEN ----------
@@ -1576,8 +1600,12 @@ header.top{padding-top:env(safe-area-inset-top)}</style>
   function renderCuadre() {
     const v = $('#v-cuadre'); const a = agg(); if (!a) { v.innerHTML = emptyCTA(); return; }
     const md = model();
+    if (md && !reports().length && puedeTraerOriginales(S.current)) {
+      v.innerHTML = `<div class="vhead"><div><h2>Cuadre con los reportes</h2><p>Compara cada número del dashboard contra los totales que trae cada reporte del SIF.</p></div></div><div class="card"><div class="muted">Trayendo los reportes originales de ${esc(a.label)} desde Google Sheets…</div></div>`;
+      ensureOriginals(S.current, () => { if (S.tab === 'cuadre') renderCuadre(); }); return;
+    }
     if (!md || !reports().length) { v.innerHTML = `<div class="vhead"><div><h2>Cuadre con los reportes</h2><p>Compara cada número del dashboard contra los totales que trae cada reporte del SIF.</p></div></div>${a.cuadre ? `<div class="grid g-kpi">${kpiCard('Último cuadre', a.cuadre.ok + ' de ' + a.cuadre.total, 'comparaciones exactas', '#34d399')}</div>` : ''}<div class="card mt">${needDetail(md ? 'Este mes viene de Google Sheets: tiene el detalle, pero no los reportes originales que se necesitan para el cuadre completo.' : 'El cuadre necesita los reportes originales.')}</div>`; return; }
-    const res = C.reconcile(reports(), md, a);
+    const res = C.reconcile(reports().filter(r => r.key), md, a);
     const ok = res.filter(r => r.ok).length, bad = res.length - ok, expl = res.filter(r => !r.ok && r.nota).length;
     v.innerHTML = `
       <div class="vhead"><div><h2>Cuadre con los reportes · ${esc(a.label)}</h2><p>Cada fila compara un número contra el total que trae el reporte del SIF. Así sabes que el dashboard leyó todo y que los reportes cuadran entre sí.</p></div></div>
@@ -2117,7 +2145,6 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
   }
 
   // ---------- VER REPORTES ----------
-  const origLoading = {};
   async function loadOriginals(ym) {
     const { archivos } = await gsPost({ action: 'getFiles', month: ym });
     const out = [];
@@ -2140,12 +2167,7 @@ ${p.percent}%` }, data: ss.map((x, i) => ({ name: x.k, value: x.prima, itemStyle
         : canFetch ? `<div class="card"><div class="muted">Trayendo los reportes originales de ${esc(C.monthLabel(ym))} desde Google Sheets…</div></div>`
         : yaTraidos ? '<div class="card"><div class="muted">Este mes se guardó antes de que el dashboard conservara los reportes originales. Vuelve a cargar sus reportes una vez y quedarán guardados para descargarlos cuando quieras.</div></div>'
         : `<div class="card">${S.gsDetalle[ym] && gsOn() && !puede('getFiles') ? '<div class="muted">Tu rol no permite ver ni descargar los reportes originales.</div>' : needDetail('Aquí puedes abrir y descargar cada Excel original. Los meses guardados en Google Sheets con detalle conservan los originales desde que se cargan.')}</div>`}`;
-    if (canFetch && !origLoading[ym]) {
-      origLoading[ym] = true;
-      loadOriginals(ym).then(list => { S.orig = S.orig || {}; S.orig[ym] = list; if (S.current === ym && S.tab === 'reportes') renderReportes(); })
-        .catch(e => toast('No se pudieron traer los reportes: ' + e.message, 6000)).finally(() => { origLoading[ym] = false; });
-      return;
-    }
+    if (canFetch) { ensureOriginals(ym, () => { if (S.tab === 'reportes') renderReportes(); }); return; }
     const dlOne = r => saveFile(fileName(r), new Blob([r.raw], { type: 'application/vnd.ms-excel' }));
     $$('[data-dl]', v).forEach(b => b.onclick = () => dlOne(reps[+b.dataset.dl]));
     $('#repAll') && ($('#repAll').onclick = async () => { for (const r of conRaw) { await dlOne(r); await new Promise(x => setTimeout(x, 450)); } });
@@ -2236,7 +2258,7 @@ async function renderUsuarios() {
           <label class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">URL de la aplicación web (termina en /exec)${GS_FIXED ? ' · fija en index.html' : ''}</span><input class="inp" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(gsCfg().url)}" ${GS_FIXED ? 'readonly' : ''}></label>
           <div class="ctrl" style="gap:4px"><span class="muted" style="font-size:12px">Sesión</span><div style="padding:9px 0">${gsOn() && gsCfg().me ? `<b>${esc(gsCfg().me.nombre || gsCfg().me.usuario)}</b> <span class="muted">(${esc(gsCfg().me.usuario)} · ${esc(ROL_NOMBRE[gsCfg().me.rol] || 'Administración')})</span>` : '<span class="muted">sin iniciar</span>'}</div></div>
         </div>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:10px"><input type="checkbox" id="gsDet" ${gsCfg().detalle ? 'checked' : ''} style="margin-top:3px"> <span>Guardar también el detalle por cliente y los reportes originales del SIF. Permite reabrir meses anteriores, volver a descargar cada reporte y sacar el Excel GSF, las letras y la presentación sin volver a subirlos. Quien tenga acceso a la hoja verá esos datos.</span></label>
+        <div class="note" style="margin-top:10px">Cada mes se guarda completo: totales, detalle por cliente y los reportes originales del SIF. Así cualquier usuario con permiso puede reabrirlo, descargar los reportes y sacar el Excel GSF, las letras y la presentación sin volver a subirlos.</div>
         <div class="tools mt"><button class="btn pri sm" id="gsSave">${gsOn() ? 'Probar conexión' : 'Conectar e iniciar sesión'}</button>${gsOn() ? '<button class="btn sm" id="gsPw">Cambiar mi contraseña</button>' : ''}${puede('usuarios') && gsOn() ? '<button class="btn sm" id="gsUsers">Usuarios y jerarquía</button>' : ''}${puede('saveMonth') ? `<button class="btn sm" id="gsPush" ${gsOn() && months().length ? '' : 'disabled'}>Subir a Sheets los meses de este navegador</button>` : ''}${!gsOn() || puede('usuarios') ? '<button class="btn sm" id="gsCode">Descargar código Apps Script</button><button class="btn sm ghost" id="gsCopy">Copiar código</button>' : ''}${gsOn() ? '<button class="btn sm ghost" id="gsOff">Cerrar sesión</button>' : ''}</div>
         <div class="note" id="gsMsg">${S.gsStatus && S.gsStatus !== 'ok' ? esc(S.gsStatus) : ''}</div>
         <details class="mt"><summary style="cursor:pointer;font-weight:600">Cómo crear la hoja (5 minutos)</summary><ol class="note" style="line-height:1.7">
@@ -2272,7 +2294,6 @@ async function renderUsuarios() {
     };
     $('#gsPw') && ($('#gsPw').onclick = () => changePwDialog(false).then(ok => ok && toast('Contraseña cambiada')));
     $('#gsUsers') && ($('#gsUsers').onclick = () => go('usuarios'));
-    $('#gsDet').onchange = e => { const g = gsCfg(); g.detalle = e.target.checked; gsRemember(); toast(g.detalle ? 'Desde la próxima carga se guarda el detalle por cliente' : 'Solo se guardarán los totales'); };
     $('#gsPush') && ($('#gsPush').onclick = async () => {
       const ms = months(); let n = 0;
       try { for (const m of ms) { loader(true, `Subiendo ${C.monthLabel(m)} a Google Sheets…`, Math.round(100 * n / ms.length)); await gsSaveMonth(S.history[m], S.models[m] && !S.models[m].fromSheets ? S.models[m].model : null, S.models[m] && S.models[m].reports); n++; } loader(false); toast(`${n} meses subidos a Google Sheets`); renderAll(); }
@@ -2318,9 +2339,10 @@ async function renderUsuarios() {
       S.models[month] = { model: md, reports: merged };
       S.history[month] = ag; S.current = month;
       const saved = await saveMonth(ag, md, merged);
+      if (saved === 'sheets') S.saveErr = null;
       loader(false);
       const unk = out.filter(r => !r.key).length;
-      const cq = ag.cuadre; toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}.${cq ? ` Cuadre: ${cq.ok} de ${cq.total} exactos${cq.total - cq.ok - cq.explicadas ? `, ${cq.total - cq.ok - cq.explicadas} por revisar` : ''}.` : ''}${saved === 'sheets' ? ' Guardado en Google Sheets' + (gsCfg().detalle ? ' con detalle.' : '.') : ''}`, 7000);
+      const cq = ag.cuadre; toast(`${C.monthLabel(month)}: ${known.length} reportes leídos${unk ? `, ${unk} sin reconocer` : ''}.${cq ? ` Cuadre: ${cq.ok} de ${cq.total} exactos${cq.total - cq.ok - cq.explicadas ? `, ${cq.total - cq.ok - cq.explicadas} por revisar` : ''}.` : ''}${saved === 'sheets' ? ` Guardado completo en Google Sheets (detalle y ${merged.filter(r => r.raw).length} reportes originales).` : ''}`, 8000);
       renderAll(); go('resumen');
     } catch (e) { loader(false); console.error(e); toast('Error al leer: ' + e.message, 6000); }
   }
